@@ -364,7 +364,12 @@ class YOLOAnchorAssigner(nn.Module):
 
             # Append
             a = t[:, 6].long()  # anchor indices
-            indices.append((b, a, gj.clamp_(0, gain[3] - 1), gi.clamp_(0, gain[2] - 1)))  # image, anchor, grid indices
+            # 关键：添加 .long() 转换为 int64 类型
+            gj_clamped = gj.clamp_(0, gain[3].long() - 1).long()
+            gi_clamped = gi.clamp_(0, gain[2].long() - 1).long()
+            indices.append((b, a, gj_clamped, gi_clamped))
+
+            # indices.append((b, a, gj.clamp_(0, gain[3] - 1), gi.clamp_(0, gain[2] - 1)))  # image, anchor, grid indices
             tbox.append(torch.cat((gxy - gij, gwh), 1))  # box
             anch.append(anchors[a])  # anchors
             tcls.append(c)  # class
@@ -688,7 +693,7 @@ class YOLOAnchorAssigner(nn.Module):
             # a = t[:, 6].long()  # anchor indices
             a = t[:, 7].long()  # anchor indices
             score = t[:,6].T
-            indices.append((b, a, gj.clamp_(0, gain[3] - 1), gi.clamp_(0, gain[2] - 1)))  # image, anchor, grid indices
+            indices.append((b, a, gj.clamp_(0, gain[3].long()  - 1), gi.clamp_(0, gain[2].long()  - 1)))  # image, anchor, grid indices
             tbox.append(torch.cat((gxy - gij, gwh), 1))  # box
             anch.append(anchors[a])  # anchors
             tcls.append(c)  # class

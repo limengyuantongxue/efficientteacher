@@ -44,10 +44,10 @@ Loss:
 Dataset:
   data_name: 'coco_ssod'
   #coco 10% supervision
-  train: data/coco/train2017_p10.0_labeled_data.txt
-  val:   data/coco/val2017.txt 
-  test:  data/coco/val2017.txt 
-  target: data/coco/train2017_p10.0_unlabeled_data.txt
+  train: datasets/coco/train2017_p10.0_labeled_data.txt
+  val:   datasets/coco/val2017.txt
+  test:  datasets/coco/val2017.txt
+  target: datasets/coco/train2017_p10.0_unlabeled_data.txt
 # 
   nc: 80  # number of classes
   np: 0 #number of keypoints
@@ -62,7 +62,7 @@ Dataset:
          'microwave', 'oven', 'toaster', 'sink', 'refrigerator', 'book', 'clock', 'vase', 'scissors', 'teddy bear',
          'hair drier', 'toothbrush' ]
   img_size: 640
-  batch_size: 32
+  batch_size: 8
   sampler_type: 'normal'
 
 

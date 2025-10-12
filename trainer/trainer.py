@@ -311,7 +311,7 @@ class Trainer:
         if self.cuda and self.RANK != -1:
             # print("Set DDP mode")
             self.model = DDP(self.model, device_ids=[self.LOCAL_RANK], output_device=self.LOCAL_RANK, find_unused_parameters=True)
-      
+        # 给模型附加属性
         # cfg.hyp.label_smoothing = opt.label_smoothing
         self.model.nc = self.nc  # attach number of classes to model
         self.model.class_weights = labels_to_class_weights(self.dataset.labels, self.nc).to(device) * self.nc  # attach class weights
@@ -330,7 +330,7 @@ class Trainer:
         if is_distributed:
             self.detect = self.model.module.head
         else:
-            self.detect = self.model.head
+            self.detect = self.model.head  # 获取检测头
 
     def before_train(self):
         return 0

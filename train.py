@@ -30,7 +30,7 @@ WORLD_SIZE = int(os.getenv('WORLD_SIZE', 1))
 
 def parse_opt(known=False):
     parser = argparse.ArgumentParser()
-    parser.add_argument('--cfg', type=str, default='', help='model.yaml path')
+    parser.add_argument('--cfg', type=str, default=r'D:\code\pencil_detect_C++\efficientteacher\configs\ssod\custom\yolov5m_custom_ssod.yaml', help='model.yaml path')
     parser.add_argument("opts",help="Modify config options using the command-line",default=None,nargs=argparse.REMAINDER)
     parser.add_argument('--local_rank', type=int, default=-1, help='DDP parameter, do not modify')
 

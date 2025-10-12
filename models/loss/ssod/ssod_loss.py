@@ -19,7 +19,7 @@ from assigner import YOLOAnchorAssigner
 # from torch.cuda.amp import autocast
 
 def smooth_BCE(eps=0.1):  # https://github.com/ultralytics/yolov3/issues/238#issuecomment-598028441
-    # return positive, negative label smoothing BCE targets
+    # return positive, negative label smoothing BCE targets(正样本0.95，负样本0.05)
     return 1.0 - 0.5 * eps, 0.5 * eps
 
 # for label match type semi spervised training
