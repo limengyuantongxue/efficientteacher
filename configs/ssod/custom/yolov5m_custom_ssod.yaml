@@ -4,7 +4,7 @@
 project: 'exp_ssod/'
 adam: False
 epochs: 300
-weights: 'D:\code\pencil_detect_C++\efficientteacher\scripts\mula_convertor\efficient-yolov5m.pt'
+weights: 'D:\code\pencil_detect_C++\efficientteacher\exp_ssod\exp2\weights\best.pt'
 prune_finetune: False
 linear_lr: True
 hyp:
@@ -18,7 +18,7 @@ hyp:
   mixup: 0.1
   mosaic: 1.0
   warmup_epochs: 3
-  burn_epochs: 0
+  burn_epochs: 150
 
 Model:
   depth_multiple: 0.67  # model depth multiple
@@ -51,7 +51,7 @@ Dataset:
   np: 0 #number of keypoints
   names: [ 'body_broken', 'eraser_broken', 'NG']
   img_size: 640
-  batch_size: 8
+  batch_size: 12
 
 SSOD:
   train_domain: True

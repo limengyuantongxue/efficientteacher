@@ -585,10 +585,11 @@ class SSODTrainer(Trainer):
             return sup_pred, sup_feature, un_sup_pred, un_sup_feature
     
     def train_instance(self, imgs, targets, paths, unlabeled_imgs, unlabeled_imgs_ori, unlabeled_gt, unlabeled_M, ni, pbar, callbacks):
-        n_img, _, _, _ = imgs.shape
-        n_pse_img, _,_,_ = unlabeled_imgs.shape
-        invalid_target_shape = True
-        unlabeled_targets = torch.zeros(8)
+        # 初始化与参数准备
+        n_img, _, _, _ = imgs.shape # 有标签图像数量
+        n_pse_img, _,_,_ = unlabeled_imgs.shape  # 无标签图像数量
+        invalid_target_shape = True  # 伪标签是否有效
+        unlabeled_targets = torch.zeros(8)  # 存储无标签图像的伪标签，这一批次无标签图像数量是8
 
         # Teacher Model Forward
         extra_teacher_outs = []
@@ -596,6 +597,7 @@ class SSODTrainer(Trainer):
             #build pseudo label via pred from teacher model
             with torch.no_grad():
                 if self.model_type in ['yolov5']:
+                    #  教师模型对原始无标签图像预测，得到预测结果和特征
                     (teacher_pred, train_out), teacher_feature = self.ema.ema(unlabeled_imgs_ori, augment=False)
                 # elif self.model_type == 'tal':
                 #     teacher_pred, teacher_feature = self.ema.ema(unlabeled_imgs_ori, augment=False)
@@ -611,11 +613,13 @@ class SSODTrainer(Trainer):
                         extra_teacher_outs.append(teacher_out)
 
         if len(self.extra_teacher_models) > 0 and len(extra_teacher_outs) > 0 :
-            unlabeled_targets, unlabeled_imgs, invalid_target_shape = self.pseudo_label_creator.create_pseudo_label_online_with_extra_teachers(teacher_pred, extra_teacher_outs, copy.deepcopy(unlabeled_imgs), unlabeled_M, self.extra_teacher_class_idxs, self.RANK)
+            unlabeled_targets, unlabeled_imgs, invalid_target_shape = self.pseudo_label_creator.create_pseudo_label_online_with_extra_teachers(teacher_pred,
+                                        extra_teacher_outs, copy.deepcopy(unlabeled_imgs), unlabeled_M, self.extra_teacher_class_idxs, self.RANK)
         elif len(self.extra_teacher_models) == 0 :
             if self.cfg.SSOD.pseudo_label_type == 'LabelMatch':
                 self.pseudo_label_creator.update(targets, n_img, n_pse_img)
-            unlabeled_targets, invalid_target_shape = self.pseudo_label_creator.create_pseudo_label_online_with_gt(teacher_pred, copy.deepcopy(unlabeled_imgs), unlabeled_M, copy.deepcopy(unlabeled_imgs_ori), unlabeled_gt, self.RANK)
+            unlabeled_targets, invalid_target_shape = self.pseudo_label_creator.create_pseudo_label_online_with_gt(teacher_pred,
+                                copy.deepcopy(unlabeled_imgs), unlabeled_M, copy.deepcopy(unlabeled_imgs_ori), unlabeled_gt, self.RANK)
             unlabeled_imgs = unlabeled_imgs.to(self.device)
         else:    
             raise NotImplementedError

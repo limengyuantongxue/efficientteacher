@@ -46,9 +46,9 @@ class Model(nn.Module):
         super().__init__()
         self.cfg = cfg
       
-        self.backbone = build_backbone(cfg)
-        self.neck = build_neck(cfg)
-        self.head = build_head(cfg)
+        self.backbone = build_backbone(cfg)  # 骨干网络
+        self.neck = build_neck(cfg)  # 颈部
+        self.head = build_head(cfg)  # 检测头
             
         # self.names = [str(i) for i in range(self.yaml['nc'])]  # default names
         self.names = cfg.Dataset.names # default names

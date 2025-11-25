@@ -27,6 +27,7 @@ class Detect(nn.Module):
         self.register_buffer('anchors', torch.tensor(anchors).float().view(self.nl, -1, 2))  # shape(nl,na,2)
         self.anchor_grid = [torch.zeros(1)] * self.nl  # init anchor grid
         # self.register_buffer('anchor_grid', a.clone().view(self.nl, 1, -1, 1, 1, 2))  # shape(nl,1,na,1,1,2)
+        # 遍历ch中每个通道数x，为每个特征层创建一个对应的1x1卷积层，self.no * self.na：每个预测位置锚框数量x锚框属性参数
         self.m = nn.ModuleList(nn.Conv2d(x, self.no * self.na, 1) for x in ch)  # output conv
         # self.prune = False
         self.stride = cfg.Model.Head.strides
@@ -49,12 +50,12 @@ class Detect(nn.Module):
         list_x = []
         for _ in x:
             list_x.append(_)
-        x = list_x
+        x = list_x  # 将输入的多尺度特征图转为列表（方便遍历，x包含3个特征图：8/16/32倍下采样）
         class_range = list(range(5 + self.nc))
         for i in range(self.nl):
-            x[i] = self.m[i](x[i])  # conv
+            x[i] = self.m[i](x[i])  # conv 1. 核心卷积：将特征图转换为预测值（通道数从ch变为no×na）
 
-            bs, _, ny, nx = x[i].shape
+            bs, _, ny, nx = x[i].shape  # bs=批次，ny/nx=特征图的高/宽
             if hasattr(self, 'export') and self.export:
                 # z.append(x[i])
                 x[i] = x[i].view(bs, self.na, self.no, -1).permute(0, 1, 3, 2)  # .contiguous() #(bs, 3, 20*20, 85)
@@ -72,9 +73,10 @@ class Detect(nn.Module):
                 y = torch.full_like(x[i], 0)
                 self.anchor_grid[i] = self.anchor_grid[i].to(x[i].device)
                 y[..., class_range] = x[i][..., class_range].sigmoid()
+                # xy坐标从网格相对坐标转换为原图绝对坐标
                 y[..., 0:2] = (y[..., 0:2] * 2. - 0.5 + self.grid[i].to(x[i].device)) * self.stride[i]  # xy
                 y[..., 2:4] = (y[..., 2:4] * 2) ** 2 * self.anchor_grid[i]  # wh
-
+                # 将解码后的结果展平为(bs, 锚框总数, no)，存入z
                 z.append(y.view(bs, -1, self.no))
 
         # if hasattr(self, 'prune') and self.prune:

@@ -100,4 +100,4 @@ def convert_efficient_to_yolov5(efficient_path='',  yolov5_path='', save_path=''
 
 if __name__ == '__main__':
     # convert_yolov5_to_efficient( r'D:\code\pencil_detect_C++\efficientteacher\yolov5m.pt', r'D:\code\pencil_detect_C++\efficientteacher\configs\sup\custom\yolov5l_custom.yaml','efficient-yolov5m.pt')
-    convert_efficient_to_yolov5(r'D:\code\pencil_detect_C++\efficientteacher\exp_ssod\exp2\weights\best.pt', yolov5_path=r'D:\code\pencil_detect_C++\efficientteacher\yolov5m.pt', save_path='test.pt')
+    convert_efficient_to_yolov5(r'D:\code\pencil_detect_C++\efficientteacher\exp_ssod\exp3\weights\best.pt', yolov5_path=r'D:\code\pencil_detect_C++\efficientteacher\yolov5m.pt', save_path='yolov5m_new.pt')
