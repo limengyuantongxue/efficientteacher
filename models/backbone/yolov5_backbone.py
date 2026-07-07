@@ -30,17 +30,17 @@ class YoloV5BackBone(nn.Module):
         self.gw = cfg.Model.width_multiple
 
         self.channels_out = {
-            'stage1': 64,
-            'stage2_1': 128,
-            'stage2_2': 128,
-            'stage3_1': 256,
-            'stage3_2': 256,
-            'stage4_1': 512,
-            'stage4_2': 512,
-            'stage5': 1024,
-            'spp': 1024,
-            'csp1': 1024,
-            'conv1': 1024
+            'stage1': 64, # 48
+            'stage2_1': 128,  # 96
+            'stage2_2': 128,  # 96
+            'stage3_1': 256,  # 192
+            'stage3_2': 256,  # 192
+            'stage4_1': 512,  # 384
+            'stage4_2': 512,  # 384
+            'stage5': 1024,   # 768
+            'spp': 1024,      # 768
+            'csp1': 1024,     # 768
+            'conv1': 1024     # 768
         }
         self.re_channels_out()
 

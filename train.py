@@ -1,5 +1,8 @@
 import os
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
 import torch
+torch.cuda.empty_cache()  # 清空缓存
 import torch.distributed as dist
 import torch.nn as nn
 from trainer.trainer import Trainer
@@ -17,6 +20,8 @@ import sys
 from datetime import timedelta
 import val
 
+
+
 FILE = Path(__file__).resolve()
 ROOT = FILE.parents[0]  # EfficientTeacher root directory
 if str(ROOT) not in sys.path:
@@ -30,7 +35,8 @@ WORLD_SIZE = int(os.getenv('WORLD_SIZE', 1))
 
 def parse_opt(known=False):
     parser = argparse.ArgumentParser()
-    parser.add_argument('--cfg', type=str, default=r'D:\code\pencil_detect_C++\efficientteacher\configs\ssod\custom\yolov5m_custom_ssod.yaml', help='model.yaml path')
+    parser.add_argument('--cfg', type=str, default=r'D:\code\pencil_detect_C++\efficientteacher\configs\ssod\custom\yolov5m_custom_ssod.yaml', \
+                        help='model.yaml path')
     parser.add_argument("opts",help="Modify config options using the command-line",default=None,nargs=argparse.REMAINDER)
     parser.add_argument('--local_rank', type=int, default=-1, help='DDP parameter, do not modify')
 

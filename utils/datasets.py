@@ -111,10 +111,10 @@ def cutout(image, labels, ori_labels):
 
 def get_hash(paths):
     # Returns a single hash value of a list of paths (files or dirs)
-    size = sum(os.path.getsize(p) for p in paths if os.path.exists(p))  # sizes
+    size = sum(os.path.getsize(p) for p in paths if os.path.exists(p))  # sizes计算paths下所有有效文件的大小
     h = hashlib.md5(str(size).encode())  # hash sizes
-    h.update(''.join(paths).encode())  # hash paths
-    return h.hexdigest()  # return hash
+    h.update(''.join(paths).encode())  # hash paths 用“路径拼接字节流”再次更新哈希状态
+    return h.hexdigest()  # return hash 将哈希对象的最终状态转为 32位小写的十六进制字符串
 
 
 def exif_size(img):
@@ -670,7 +670,7 @@ class LoadImagesAndLabels(Dataset):
             self.include_class = []
         newpath = []
         path = path.split('||')
-        for p in path:
+        for p in path:  # 训练图像路径
             if '*' in p:
                 dirpath,times = p.split('*')
                 for t in range(int(times)):
@@ -681,15 +681,15 @@ class LoadImagesAndLabels(Dataset):
         try:
             f = []  # image files
             for p in path if isinstance(path, list) else [path]:
-                p = p.strip()
+                p = p.strip()  # 去除字符串两端的空白字符
                 p = Path(p)  # os-agnostic
                 if p.is_dir():  # dir
                     f += glob.glob(str(p / '**' / '*.*'), recursive=True)
                     # f = list(p.rglob('**/*.*'))  # pathlib
                 elif p.is_file():  # file
                     with open(p, 'r') as t:
-                        t = t.read().strip().splitlines()
-                        parent = str(p.parent) + os.sep
+                        t = t.read().strip().splitlines()  # 读取全部内容，去除两端空白，按换行符 \n 分割字符串
+                        parent = str(p.parent) + os.sep  # 获取父目录，添加系统路径分隔符
                         f += [x.replace('./', parent) if x.startswith('./') else x for x in t]  # local to global path
                         # f += [p.parent / x.lstrip(os.sep) for x in t]  # local to global path (pathlib)
                 else:
@@ -707,7 +707,7 @@ class LoadImagesAndLabels(Dataset):
 
         else:
             # self.label_files = img2label_paths(self.hyp.image_dir, self.hyp.label_dir, self.img_files)  # labels
-            self.label_files = img2label_paths(self.img_files)  # labels
+            self.label_files = img2label_paths(self.img_files)  # labels, 获得标签路径
         # Check cache
         # self.label_files = img2label_paths(self.img_files)  # labels
         # print(self.img_files, "|", self.label_files)
@@ -730,7 +730,7 @@ class LoadImagesAndLabels(Dataset):
         assert nf > 0 or not augment, f'{prefix}No labels in {cache_path}. Can not train without labels. See {HELP_URL}'
 
         # Read cache
-        [cache.pop(k) for k in ('hash', 'version', 'msgs')]  # remove items
+        [cache.pop(k) for k in ('hash', 'version', 'msgs')]  # remove items，清理这三个键
         labels, shapes, self.segments = zip(*cache.values())
         self.labels = list(labels)
         #id逻辑与points逻辑分离开
@@ -739,7 +739,7 @@ class LoadImagesAndLabels(Dataset):
             self.labels = [l[:,:5] for l in self.labels]
         else:
             if self.num_points==0:
-                self.labels = [l[:,:5] for l in self.labels]
+                self.labels = [l[:,:5] for l in self.labels]  # 确保labels只有5个元素
         self.shapes = np.array(shapes, dtype=np.float64)
         self.img_files = list(cache.keys())  # update
         self.label_files = img2label_paths(cache.keys())  # update
@@ -762,9 +762,9 @@ class LoadImagesAndLabels(Dataset):
             for label in self.labels:
                 for l in label:
                     cls_tmp[int(l[0:1])] += 1
-            self.cls_ratio_gt = cls_tmp/np.sum(cls_tmp)
-            self.label_num_per_image = np.sum(cls_tmp) / len(self.img_files)
-            info = ' '.join([f'({v:.2f}-{i})' for i, v in enumerate(cls_tmp)])
+            self.cls_ratio_gt = cls_tmp/np.sum(cls_tmp)  # 每个类别所占的比例
+            self.label_num_per_image = np.sum(cls_tmp) / len(self.img_files)  #
+            info = ' '.join([f'({v:.2f}-{i})' for i, v in enumerate(cls_tmp)])  # 标签数/图片数
             logging.info(f'cls gt ratio(positive): {info}')
             logging.info(f'cls gt total number: {np.sum(cls_tmp)} label number per image: {self.label_num_per_image}')
 
@@ -853,14 +853,21 @@ class LoadImagesAndLabels(Dataset):
                 pbar = tqdm(pool.imap(verify_image_label_with_id, zip(self.img_files, self.label_files, id_list, repeat(prefix))),
                             desc=desc, total=len(self.img_files))
             else:
+                # zip 将多个列表 / 迭代器 “打包成参数元组
                 pbar = tqdm(pool.imap(verify_image_label, zip(self.img_files, self.label_files, repeat(prefix), repeat(self.num_points))),
                             desc=desc, total=len(self.img_files))
             for im_file, l, shape, segments, nm_f, nf_f, ne_f, nc_f, msg in pbar:
-                nm += nm_f
-                nf += nf_f
-                ne += ne_f
-                nc += nc_f
-                if im_file:
+                # im_file：有效图像路径（无效则为 None）
+                # l：校验后的标签内容（如 [类别, x, y, w, h]，确保坐标归一化、类别合法）
+                # shape：图像尺寸（(高, 宽)，用于后续坐标转换）
+                # segments：分割掩码（若为分割数据集，否则为 None）
+                # nm_f/nf_f/ne_f/nc_f：单个样本的异常统计（如缺失则 nm_f=1，有效则 nf_f=1）
+                # msg：异常日志（如 “图像不存在”“标签坐标超出范围”）
+                nm += nm_f  # 累加缺失数
+                nf += nf_f  # 累加有效数
+                ne += ne_f  # 累加空标签数
+                nc += nc_f  # 累加损坏数
+                if im_file: # 若图像有效，存储标签、尺寸、分割掩码
                     x[im_file] = [l, shape, segments]
                 if msg:
                     msgs.append(msg)
@@ -1217,10 +1224,22 @@ def load_image(self, i):
 
 
 def load_mosaic(self, index, num_points):
+    """
+    YOLOv5 4-Mosaic数据增强加载器
+    将1张目标图片+3张随机图片拼接为2×2的马赛克图像，并处理标注标签（检测框/跟踪ID/关键点/分割轮廓）
+    Args:
+        self:数据集类实例，包含图片尺寸、标注、ID、超参数等属性
+        index:目标图片的索引
+        num_points:关键点数量（如人脸68点、人体17点，无关键点则为0）
+
+    Returns:
+        img4 (np.ndarray): 拼接并增强后的马赛克图像，shape=(2*img_size, 2*img_size, 3)
+        labels4 (np.ndarray): 处理后的标注标签，包含类别、检测框、关键点/跟踪ID等信息
+    """
     # YOLOv5 4-mosaic loader. Loads 1 image + 3 random images into a 4-image mosaic
     labels4, segments4 = [], []
     s = self.img_size
-    yc, xc = [int(random.uniform(-x, 2 * s + x)) for x in self.mosaic_border]  # mosaic center x, y
+    yc, xc = [int(random.uniform(-x, 2 * s + x)) for x in self.mosaic_border]  # mosaic center x, y(应该叫拼接中心，不是画布的中心)
     indices = [index] + random.choices(self.indices, k=3)  # 3 additional image indices
     random.shuffle(indices)
     for i, index in enumerate(indices):
@@ -1229,9 +1248,10 @@ def load_mosaic(self, index, num_points):
 
         # place img in img4
         if i == 0:  # top left
+            # 创建2s×2s的马赛克基础画布，用114（灰色）填充背景
             img4 = np.full((s * 2, s * 2, img.shape[2]), 114, dtype=np.uint8)  # base image with 4 tiles
-            x1a, y1a, x2a, y2a = max(xc - w, 0), max(yc - h, 0), xc, yc  # xmin, ymin, xmax, ymax (large image)
-            x1b, y1b, x2b, y2b = w - (x2a - x1a), h - (y2a - y1a), w, h  # xmin, ymin, xmax, ymax (small image)
+            x1a, y1a, x2a, y2a = max(xc - w, 0), max(yc - h, 0), xc, yc  # xmin, ymin, xmax, ymax (large image)  # 大画布上的矩形区域
+            x1b, y1b, x2b, y2b = w - (x2a - x1a), h - (y2a - y1a), w, h  # xmin, ymin, xmax, ymax (small image)  # 小图片上的截取区域
         elif i == 1:  # top right
             x1a, y1a, x2a, y2a = xc, max(yc - h, 0), min(xc + w, s * 2), yc
             x1b, y1b, x2b, y2b = 0, h - (y2a - y1a), min(w, x2a - x1a), h
@@ -1582,8 +1602,8 @@ def verify_image_label(args):
         assert im.format.lower() in IMG_FORMATS, f'invalid image format {im.format}'
         if im.format.lower() in ('jpg', 'jpeg'):
             with open(im_file, 'rb') as f:
-                f.seek(-2, 2)
-                if f.read() != b'\xff\xd9':  # corrupt JPEG
+                f.seek(-2, 2)   # 移动文件指针到末尾往前2个字节，2：末尾， -2：前两个字节
+                if f.read() != b'\xff\xd9':  # corrupt JPEG 损坏的jpeg
                     Image.open(im_file).save(im_file, format='JPEG', subsampling=0, quality=100)  # re-save image
                     msg = f'{prefix}WARNING: {im_file}: corrupt JPEG restored and saved'
 
@@ -1624,7 +1644,7 @@ def verify_image_label(args):
                 assert l.shape[1] == length_with_points, f'labels require 5 columns, {l.shape[1]} columns detected'
                 assert (l >= 0).all(), f'negative label values {l[l < 0]}'
                 assert (l[:, 1:] <= 1).all(), f'non-normalized or out of bounds coordinates {l[:, 1:][l[:, 1:] > 1]}'
-                l = np.unique(l, axis=0)  # remove duplicate rows
+                l = np.unique(l, axis=0)  # remove duplicate rows去除数组中重复的行
                 if len(l) < nl:
                     segments = np.unique(segments, axis=0)
                     msg = f'{prefix}WARNING: {im_file}: {nl - len(l)} duplicate labels removed'

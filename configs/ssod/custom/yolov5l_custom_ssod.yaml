@@ -2,7 +2,7 @@
 
 project: 'yolov5_ssod'
 adam: False
-epochs: 20
+epochs: 300
 weights: ''
 prune_finetune: False
 linear_lr: True
@@ -15,7 +15,7 @@ hyp:
   hsv_v: 0.4
   lrf: 1.0
   scale: 0.9
-  burn_epochs: 10
+  burn_epochs: 150
   no_aug_epochs: 0
   # mixup: 0.1
   warmup_epochs: 3
@@ -43,15 +43,15 @@ Loss:
 
 Dataset:
   data_name: 'coco'
-  train: data/custom_train.txt  # 118287 images
-  val: data/custom_val.txt  # 5000 images
-  test: data/custom_val.txt # 20288 of 40670 images, submit to https://competitions.codalab.org/competitions/20794^
-  target: data/custom_unlabeled.txt
-  nc: 2  # number of classes
+  train: D:/code/image/pencil_dataset_withunlabel/train.txt  # 4911 images
+  val: D:/code/image/pencil_dataset_withunlabel/test.txt  # 1230 images
+  test: D:/code/image/pencil_dataset_withunlabel/test.txt # 8607 images
+  target: D:/code/image/pencil_dataset_withunlabel/train_unlabel.txt
+  nc: 3  # number of classes
   np: 0 #number of keypoints
-  names: [ 'rick', 'morty']
+  names: [ 'body_broken', 'eraser_broken', 'NG' ]
   img_size: 640
-  batch_size: 128
+  batch_size: 10
 
 SSOD:
   train_domain: True

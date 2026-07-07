@@ -99,5 +99,5 @@ def convert_efficient_to_yolov5(efficient_path='',  yolov5_path='', save_path=''
         torch.save(yolov5_ckpt, save_path)
 
 if __name__ == '__main__':
-    # convert_yolov5_to_efficient( r'D:\code\pencil_detect_C++\efficientteacher\yolov5m.pt', r'D:\code\pencil_detect_C++\efficientteacher\configs\sup\custom\yolov5l_custom.yaml','efficient-yolov5m.pt')
-    convert_efficient_to_yolov5(r'D:\code\pencil_detect_C++\efficientteacher\exp_ssod\exp3\weights\best.pt', yolov5_path=r'D:\code\pencil_detect_C++\efficientteacher\yolov5m.pt', save_path='yolov5m_new.pt')
+    # convert_yolov5_to_efficient( r"D:\code\yolov5-master\runs\train\exp32\weights\best.pt", r'D:\code\pencil_detect_C++\efficientteacher\configs\sup\custom\yolov5m_custom.yaml','yolov5m_weights.pt')
+    convert_efficient_to_yolov5(r'D:\code\pencil_detect_C++\efficientteacher\exp_ssod\exp34\weights\best.pt', yolov5_path=r'D:\code\pencil_detect_C++\efficientteacher\yolov5m.pt', save_path='yolov5_cropped_ssod_2.pt')

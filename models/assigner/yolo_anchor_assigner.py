@@ -323,7 +323,9 @@ class YOLOAnchorAssigner(nn.Module):
         gain = torch.ones(7, device=targets.device)  # normalized to gridspace gain
         ai = torch.arange(na, device=targets.device).float().view(na, 1).repeat(1, nt)  # same as .repeat_interleave(nt)
         targets = torch.cat((targets.repeat(na, 1, 1), ai[:, :, None]), 2)  # append anchor indices
-
+        # [[[0,0,0.5,0.5,0.2,0.3,0], [0,1,0.3,0.7,0.1,0.2,0]],  # 锚框0
+        #  [[0,0,0.5,0.5,0.2,0.3,1], [0,1,0.3,0.7,0.1,0.2,1]],  # 锚框1
+        #  [[0,0,0.5,0.5,0.2,0.3,2], [0,1,0.3,0.7,0.1,0.2,2]]]  # 锚框2
         g = 0.5  # bias
         off = torch.tensor([[0, 0],
                             [1, 0], [0, 1], [-1, 0], [0, -1],  # j,k,l,m
@@ -332,20 +334,21 @@ class YOLOAnchorAssigner(nn.Module):
 
         for i in range(self.nl):
             anchors = self.anchors[i]
-            gain[2:6] = torch.tensor(p[i].shape)[[3, 2, 3, 2]]  # xyxy gain
+            gain[2:6] = torch.tensor(p[i].shape)[[3, 2, 3, 2]]  # xyxy gain = [1,1,80,80,80,80,1]
 
             # Match targets to anchors
-            t = targets * gain
-            if nt:
+            t = targets * gain  # 将标注的归一化坐标值转化到不同尺度上的特征图上的坐标
+            # t[0,0:] = [0,0,40,40,16,24,0]  # (40,40) = (0.5*80, 0.5*80)
+            if nt:  # 如果检测到了目标（检测到的目标数量大于1）
                 # Matches
                 r = t[:, :, 4:6] / anchors[:, None]  # wh ratio
-                j = torch.max(r, 1. / r).max(2)[0] < self.anchor_t  # compare
+                j = torch.max(r, 1. / r).max(2)[0] < self.anchor_t  # compare 锚框与真是目标的尺寸兼容性筛选核心逻辑
                 # j = wh_iou(anchors, t[:, 4:6]) > model.hyp['iou_t']  # iou(3,n)=wh_iou(anchors(3,2), gwh(n,2))
                 t = t[j]  # filter
 
                 # Offsets
-                gxy = t[:, 2:4]  # grid xy
-                gxi = gain[[2, 3]] - gxy  # inverse
+                gxy = t[:, 2:4]  # grid xy目标中心点在当前特征图上的坐标
+                gxi = gain[[2, 3]] - gxy  # inverse计算到网格右边和底边的距离
                 j, k = ((gxy % 1. < g) & (gxy > 1.)).T
                 l, m = ((gxi % 1. < g) & (gxi > 1.)).T
                 j = torch.stack((torch.ones_like(j), j, k, l, m))
@@ -364,7 +367,7 @@ class YOLOAnchorAssigner(nn.Module):
 
             # Append
             a = t[:, 6].long()  # anchor indices
-            # 关键：添加 .long() 转换为 int64 类型
+            # 关键：添加 .long() 转换为 int64 类型，限制在特征图范围内
             gj_clamped = gj.clamp_(0, gain[3].long() - 1).long()
             gi_clamped = gi.clamp_(0, gain[2].long() - 1).long()
             indices.append((b, a, gj_clamped, gi_clamped))

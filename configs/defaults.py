@@ -1,6 +1,7 @@
 #Copyright (c) 2023, Alibaba Group
 from .yacs import CfgNode as CN
-
+# yacs：全称为 "Yet Another Configuration System"，是一个轻量级的 Python 配置库，专门用于管理项目中的参数
+# CfgNode:增强版的字典，用于大型项目的配置管理
 #该部分尽量保持与yolov5一致
 _C = CN()
 _C.debug= False 
@@ -11,7 +12,7 @@ _C.ngpu=1 #训练时使用的gpu个数
 _C.adam=False #是否使用Adam优化函数
 _C.prune_finetune=False #是否根据一个已剪枝的模型进行finetune
 _C.reinitial=False #读取的剪枝预训练模型是否重新初始化
-_C.noautoanchor=True 
+_C.noautoanchor=False
 _C.project=''
 _C.name='exp'
 _C.epochs=300
@@ -77,7 +78,7 @@ _C.Model.weights=''
 
 _C.Model.width_multiple = 1.0 #width ratio for s/m/l model
 _C.Model.depth_multiple = 1.0 #depth ratio for s/m/l model
-_C.Model.anchors = [[10, 13, 16, 30, 33, 23], [30, 61, 62, 45, 59, 119], [116, 90, 156, 198, 373, 326]]
+_C.Model.anchors = [[10, 13, 16, 30, 33, 23], [30, 61, 62, 45, 59, 119], [116, 90, 156, 198, 373, 326]]  # 宽高
 _C.Model.ch = 3 #输入通道数
 
 _C.Model.Backbone = CN()
@@ -183,7 +184,7 @@ _C.Dataset.label_path=''
 _C.Dataset.batch_size=96 #训练时的batch图片数，8卡训练时每张卡获得96/8=12张图，以此类推
 _C.Dataset.img_size=640 #训练时将图片resize的尺寸
 _C.Dataset.rect=False #是否使用长方形进行训练
-_C.Dataset.workers=16 #dataloader读图时使用的线程数，增加可一定程度加速训练
+_C.Dataset.workers=8 #dataloader读图时使用的线程数，增加可一定程度加速训练
 _C.Dataset.quad=False
 # _C.Dataset.use_bgr=False
 # _C.Dataset.lp_order=False

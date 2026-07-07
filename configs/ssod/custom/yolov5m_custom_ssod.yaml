@@ -3,8 +3,9 @@
 # Parameters
 project: 'exp_ssod/'
 adam: False
-epochs: 300
-weights: 'D:\code\pencil_detect_C++\efficientteacher\exp_ssod\exp2\weights\best.pt'
+epochs: 150
+resume: True
+weights: "D:/code/pencil_detect_C++/efficientteacher/exp_ssod/exp47/weights/best.pt"
 prune_finetune: False
 linear_lr: True
 hyp:
@@ -17,8 +18,8 @@ hyp:
   no_aug_epochs: 0
   mixup: 0.1
   mosaic: 1.0
-  warmup_epochs: 3
-  burn_epochs: 150
+  warmup_epochs: 0
+  burn_epochs: 40
 
 Model:
   depth_multiple: 0.67  # model depth multiple
@@ -43,27 +44,27 @@ Loss:
 
 Dataset:
   data_name: 'coco'
-  train: D:/code/image/pencil_dataset_withunlabel/train.txt  # 4911 images
-  val: D:/code/image/pencil_dataset_withunlabel/test.txt  # 1230 images
-  test: D:/code/image/pencil_dataset_withunlabel/test.txt # 8607 images
-  target: D:/code/image/pencil_dataset_withunlabel/train_unlabel.txt
+  train: D:\dataset\broken_pencil_cocotoyolo\cropped_new\images\train.txt  # 4911 images
+  val: D:\dataset\broken_pencil_cocotoyolo\cropped_new\images\val.txt  # 1230 images
+  test: D:\dataset\broken_pencil_cocotoyolo\cropped_new\images\val.txt # 8607 images
+  target: D:\dataset\broken_pencil_cocotoyolo\cropped_new\images\unlabel.txt
   nc: 3  # number of classes
   np: 0 #number of keypoints
   names: [ 'body_broken', 'eraser_broken', 'NG']
-  img_size: 640
-  batch_size: 12
+  img_size: 1280
+  batch_size: 4
 
 SSOD:
   train_domain: True
   nms_conf_thres: 0.1
-  nms_iou_thres: 0.65
+  nms_iou_thres: 0.4
   teacher_loss_weight: 1.0
   cls_loss_weight: 0.3
   box_loss_weight: 0.05
   obj_loss_weight: 0.7
   loss_type: 'ComputeStudentMatchLoss'
-  ignore_thres_low: 0.1
-  ignore_thres_high: 0.6
+  ignore_thres_low: 0.05
+  ignore_thres_high: 0.3
   uncertain_aug: True
   use_ota: False
   multi_label: False
@@ -76,7 +77,7 @@ SSOD:
   epoch_adaptor: True
   resample_high_percent: 0.25
   resample_low_percent: 0.99
-  ema_rate: 0.999
+  ema_rate: 0.996
   cosine_ema: True
   imitate_teacher: False
   ssod_hyp:
