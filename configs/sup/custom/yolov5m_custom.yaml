@@ -38,12 +38,13 @@ Loss:
   cls: 0.3
   obj: 0.7
   anchor_t: 4.0
+  assigner_type: 'SaA'
 
 Dataset:
   data_name: 'coco'
-  train: D:/dataset/broken_pencil_cocotoyolo/cropped/images/train.txt  # 118287 images
-  val: D:/dataset/broken_pencil_cocotoyolo/cropped/images/val.txt # 5000 images
-  test: D:/dataset/broken_pencil_cocotoyolo/cropped/images/val.txt # 20288 of 40670 images, submit to https://competitions.codalab.org/competitions/20794^
+  train: D:/dataset/broken_pencil_cocotoyolo/images/train_origin.txt  # 118287 images
+  val: D:/dataset/broken_pencil_cocotoyolo/images/val_origin.txt # 5000 images
+  test: D:/dataset/broken_pencil_cocotoyolo/images/val_origin.txt # 20288 of 40670 images, submit to https://competitions.codalab.org/competitions/20794^
   nc: 3  # number of classes
   np: 0 #number of keypoints
   names: [ 'body_broken', 'eraser_broken', 'NG' ]

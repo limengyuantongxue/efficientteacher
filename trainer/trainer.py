@@ -34,6 +34,8 @@ from utils.torch_utils import ModelEMA, de_parallel, intersect_dicts, torch_dist
 from utils.metrics import MetricMeter, fitness
 from utils.loggers import Loggers
 # from ..val import run # for end-of-epoch mAP
+import os
+import pickle
 from contextlib import redirect_stdout
 import torch.distributed as dist
 
@@ -532,7 +534,29 @@ class Trainer:
             if self.epoch == self.break_epoch:
                 break
             self.before_epoch()
+
+            # --- SA-OTA debug data collection (every 5 epochs) ---
+            debug_every = 5
+            has_sa_assigner = hasattr(self, 'compute_loss') and hasattr(self.compute_loss, 'sa') and self.compute_loss.sa
+            if has_sa_assigner and self.epoch % debug_every == 0:
+                self.compute_loss.set_assigner_debug(True)
+            # -------------------------------------------------------
+
             self.train_in_epoch(callbacks)
+
+            # --- Collect and save SA-OTA debug data ---
+            if has_sa_assigner and self.epoch % debug_every == 0:
+                self.compute_loss.set_assigner_debug(False)
+                debug_data = self.compute_loss.sa_assigner.get_debug_data()
+                self.compute_loss.sa_assigner.clear_debug_data()
+                debug_dir = self.save_dir / 'dynamic_ks_debug'
+                os.makedirs(debug_dir, exist_ok=True)
+                debug_path = debug_dir / f'epoch_{self.epoch:04d}.pkl'
+                with open(debug_path, 'wb') as f_dbg:
+                    pickle.dump(debug_data, f_dbg)
+                LOGGER.info(f'[SA-OTA Debug] Saved {len(debug_data)} GT records to {debug_path}')
+            # ----------------------------------------------------
+
             self.after_epoch(callbacks, val)
             # end epoch ----------------------------------------------------------------------------------------------------
         # end training -----------------------------------------------------------------------------------------------------

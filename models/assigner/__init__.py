@@ -1,2 +1,3 @@
 from .simota_assigner import SimOTAAssigner
 from .yolo_anchor_assigner import YOLOAnchorAssigner
+from .scale_aware_assigner import ScaleAwareAssigner

@@ -339,7 +339,7 @@ class YOLOAnchorAssigner(nn.Module):
             # Match targets to anchors
             t = targets * gain  # 将标注的归一化坐标值转化到不同尺度上的特征图上的坐标
             # t[0,0:] = [0,0,40,40,16,24,0]  # (40,40) = (0.5*80, 0.5*80)
-            if nt:  # 如果检测到了目标（检测到的目标数量大于1）
+            if nt:  # 真值数量大于1
                 # Matches
                 r = t[:, :, 4:6] / anchors[:, None]  # wh ratio
                 j = torch.max(r, 1. / r).max(2)[0] < self.anchor_t  # compare 锚框与真是目标的尺寸兼容性筛选核心逻辑

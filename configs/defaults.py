@@ -12,7 +12,7 @@ _C.ngpu=1 #训练时使用的gpu个数
 _C.adam=False #是否使用Adam优化函数
 _C.prune_finetune=False #是否根据一个已剪枝的模型进行finetune
 _C.reinitial=False #读取的剪枝预训练模型是否重新初始化
-_C.noautoanchor=False
+_C.noautoanchor=True
 _C.project=''
 _C.name='exp'
 _C.epochs=300
@@ -184,7 +184,7 @@ _C.Dataset.label_path=''
 _C.Dataset.batch_size=96 #训练时的batch图片数，8卡训练时每张卡获得96/8=12张图，以此类推
 _C.Dataset.img_size=640 #训练时将图片resize的尺寸
 _C.Dataset.rect=False #是否使用长方形进行训练
-_C.Dataset.workers=8 #dataloader读图时使用的线程数，增加可一定程度加速训练
+_C.Dataset.workers=6 #dataloader读图时使用的线程数，增加可一定程度加速训练
 _C.Dataset.quad=False
 # _C.Dataset.use_bgr=False
 # _C.Dataset.lp_order=False

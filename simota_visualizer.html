@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SimOTA Visualizer</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:system-ui,sans-serif;background:#1a1a2e;color:#e0e0e0;min-height:100vh}
+.header{background:#16213e;padding:14px 24px;border-bottom:1px solid #0f3460}
+.header h1{font-size:1.2rem;color:#e94560}
+.container{max-width:1300px;margin:0 auto;padding:16px}
+.info-box{background:#0f3460;border-radius:6px;padding:12px 16px;margin-bottom:16px;font-size:.82rem;line-height:1.7;border-left:3px solid #e94560}
+.info-box strong{color:#e94560}
+.frm{font-family:monospace;background:#0d1117;padding:1px 6px;border-radius:3px;color:#e94560}
+.main-layout{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.panel{background:#16213e;border-radius:8px;padding:16px;border:1px solid #0f3460}
+.panel h2{font-size:.95rem;color:#e94560;margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid #0f3460}
+canvas{display:block;width:100%;max-width:500px;border-radius:4px;background:#0d1117;margin:0 auto}
+.legend{display:flex;gap:12px;margin:10px 0;font-size:.7rem}
+.legend-item{display:flex;align-items:center;gap:4px}
+.legend-color{width:12px;height:12px;border-radius:2px}
+#matrixArea{overflow-x:auto;min-height:60px}
+#matrixArea table{border-collapse:collapse;font-size:.72rem;margin:0 auto}
+#matrixArea td{padding:8px 12px;text-align:center;border:2px solid #1a1a2e;font-weight:600}
+#matrixArea th{padding:4px 8px;text-align:center;color:#999;font-size:.65rem;font-weight:400}
+.controls{display:flex;gap:8px;margin-top:14px;align-items:center}
+button{padding:8px 18px;border:none;border-radius:5px;font-size:.8rem;font-weight:600;cursor:pointer}
+button.primary{background:#e94560;color:#fff}
+button.primary:hover{background:#ff6b81}
+button.secondary{background:#2a2a4a;color:#ccc;border:1px solid #444}
+button.secondary:hover{background:#3a3a5a}
+button:disabled{opacity:.35;cursor:not-allowed}
+.stat-card{background:#0d1117;border-radius:5px;padding:10px;text-align:center;min-width:80px}
+.stat-card .label{font-size:.65rem;color:#888;margin-bottom:3px}
+.stat-card .value{font-size:1.2rem;font-weight:700}
+.err{background:#ff6b3633;border:1px solid #ff6b36;border-radius:4px;padding:8px 12px;margin-top:8px;font-size:.75rem;display:none}
+</style>
+</head>
+<body>
+<div class="header"><h1>SimOTA - Dynamic Label Assignment</h1></div>
+<div class="container">
+<div class="info-box" id="ib">Click <strong>Next</strong> to begin.</div>
+<div class="err" id="em"></div>
+<div class="main-layout">
+<div class="panel">
+<h2>Feature Map</h2>
+<canvas id="c" width="500" height="500"></canvas>
+<div class="legend">
+<div class="legend-item"><div class="legend-color" style="background:#e94560"></div> GT</div>
+<div class="legend-item"><div class="legend-color" style="background:#7b68ee"></div> Candidates</div>
+<div class="legend-item"><div class="legend-color" style="background:#1a8a4a"></div> Assigned</div>
+<div class="legend-item"><div class="legend-color" style="background:#ff6b36"></div> Conflict</div>
+</div>
+<div id="st" style="display:flex;gap:10px;flex-wrap:wrap;margin-top:8px"></div>
+</div>
+<div class="panel">
+<h2 id="mt">Cost Matrix</h2>
+<div id="ma"></div>
+<div class="controls">
+<button class="secondary" id="bp">&larr; Prev</button>
+<button class="primary" id="bn">Next &rarr;</button>
+<button class="secondary" id="br">Reset</button>
+<span style="color:#888;font-size:.78rem">Step <span id="sn">1</span>/7</span>
+</div>
+</div>
+</div>
+</div>
+<script>
+window.onerror = function(msg, src, line, col, err) {
+  var el = document.getElementById('em');
+  if (el) { el.style.display = 'block'; el.textContent = 'JS Error: ' + msg + ' (line ' + line + ')'; }
+  return false;
+};
+try {(function() {
+var GRID=80,SCALE=6.25;
+var cs=0,TS=7;
+var gts=[{cx:20,cy:35,w:12,h:18,cls:0,name:'GT0-dog',color:'#e94560'},{cx:55,cy:50,w:16,h:14,cls:1,name:'GT1-car',color:'#ff6b36'}];
+var cds=[{cx:21,cy:34,w:11,h:17,cl:'#7b68ee'},{cx:19,cy:36,w:14,h:20,cl:'#7b68ee'},{cx:22,cy:33,w:8,h:12,cl:'#7b68ee'},{cx:48,cy:48,w:30,h:28,cl:'#888'},{cx:54,cy:51,w:15,h:13,cl:'#7b68ee'},{cx:56,cy:49,w:14,h:15,cl:'#7b68ee'},{cx:38,cy:42,w:20,h:22,cl:'#7b68ee'},{cx:25,cy:52,w:13,h:16,cl:'#7b68ee'}];
+cds.forEach(function(c,i){c.id=i;c.sel=false;c.conf=false;c.agt=-1;});
+var iou=[[0.78,0.72,0.45,0.05,0.02,0.01,0.08,0.35],[0.01,0.03,0.02,0.15,0.81,0.76,0.32,0.28]];
+var clsc=[[0.85,0.02],[0.78,0.03],[0.55,0.10],[0.12,0.08],[0.01,0.88],[0.02,0.82],[0.30,0.45],[0.50,0.25]];
+var obj=[0.9,0.85,0.7,0.4,0.92,0.88,0.65,0.55];
+var cp=[];for(var ci=0;ci<8;ci++){cp[ci]=[];for(var gi=0;gi<2;gi++)cp[ci][gi]=Math.sqrt(clsc[ci][gi]*obj[ci]);}
+var cLoss=[[],[]],iLoss=[[],[]],cst=[[],[]];
+for(var gi=0;gi<2;gi++)for(var ci=0;ci<8;ci++){
+ var y=cp[ci][gi],t=gi===gts[gi].cls?1:0,eps=1e-8;
+ cLoss[gi][ci]=-(t*Math.log(Math.max(y,eps))+(1-t)*Math.log(Math.max(1-y,eps)));
+ iLoss[gi][ci]=-Math.log(Math.max(iou[gi][ci],eps));
+ cst[gi][ci]=cLoss[gi][ci]+3.0*iLoss[gi][ci];
+}
+var tk=[];for(var gi=0;gi<2;gi++){var s=iou[gi].slice().sort(function(a,b){return b-a;});tk[gi]=s.slice(0,10);}
+var dk=[Math.max(1,Math.round(tk[0].reduce(function(a,b){return a+b;},0))),Math.max(1,Math.round(tk[1].reduce(function(a,b){return a+b;},0)))];
+var mm=[[],[]],fm=[],mg=[];
+function rOTA(){
+ for(var gi=0;gi<2;gi++)mm[gi]=[0,0,0,0,0,0,0,0];
+ for(var gi=0;gi<2;gi++){var row=[];for(var ci=0;ci<8;ci++)row.push({v:cst[gi][ci],i:ci});row.sort(function(a,b){return a.v-b.v;});
+  for(var j=0;j<Math.min(dk[gi],8);j++)mm[gi][row[j].i]=1;}
+ for(var ci=0;ci<8;ci++){if(mm[0][ci]+mm[1][ci]>1){var bst=cst[0][ci]<cst[1][ci]?0:1;mm[1-bst][ci]=0;}}
+ fm=[];mg=[];for(var ci=0;ci<8;ci++){var f=-1;for(var gi=0;gi<2;gi++)if(mm[gi][ci]===1)f=gi;fm[ci]=f>=0;mg[ci]=f;}
+}
+rOTA();
+function dB(ctx){
+ ctx.clearRect(0,0,500,500);ctx.strokeStyle='#1a1a3e';ctx.lineWidth=0.5;
+ for(var i=0;i<=GRID;i++){ctx.beginPath();ctx.moveTo(i*SCALE,0);ctx.lineTo(i*SCALE,500);ctx.stroke();ctx.beginPath();ctx.moveTo(0,i*SCALE);ctx.lineTo(500,i*SCALE);ctx.stroke();}
+ for(var gi=0;gi<gts.length;gi++){var gt=gts[gi];ctx.fillStyle=gt.color+'30';var x=(gt.cx-gt.w/2)*SCALE,y=(gt.cy-gt.h/2)*SCALE,w=gt.w*SCALE,h=gt.h*SCALE;ctx.fillRect(x,y,w,h);ctx.strokeStyle=gt.color;ctx.lineWidth=2.5;ctx.strokeRect(x,y,w,h);ctx.fillStyle=gt.color;ctx.beginPath();ctx.arc(gt.cx*SCALE,gt.cy*SCALE,4,0,Math.PI*2);ctx.fill();ctx.font='bold 13px system-ui';ctx.fillText(gt.name,gt.cx*SCALE-20,y-8);}
+}
+function dC(ctx){
+ for(var ci=0;ci<cds.length;ci++){var c=cds[ci];var sc=c.cl,fa='15',lw=1.5;if(c.agt>=0){sc='#1a8a4a';fa='35';lw=3;}else if(c.conf){sc='#ff6b36';lw=2.5;}
+  var x=(c.cx-c.w/2)*SCALE,y=(c.cy-c.h/2)*SCALE,w=c.w*SCALE,h=c.h*SCALE;ctx.fillStyle=sc+fa;ctx.fillRect(x,y,w,h);ctx.strokeStyle=sc;ctx.lineWidth=lw;ctx.setLineDash(c.conf&&c.agt<0?[4,4]:[]);ctx.strokeRect(x,y,w,h);ctx.setLineDash([]);ctx.fillStyle=sc;ctx.beginPath();ctx.arc(c.cx*SCALE,c.cy*SCALE,2.5,0,Math.PI*2);ctx.fill();var lbl='C'+ci;if(c.agt>=0)lbl+='->GT'+c.agt;ctx.fillStyle=c.agt>=0?'#1a8a4a':(c.conf?'#ff6b36':'#aaa');ctx.font='bold 10px system-ui';ctx.fillText(lbl,x+2,y-3);}
+}
+function f2(v){return v.toFixed(2);}
+function bT(title,data,fmt,gc,ch,ic){
+ var h='';if(title)h+='<div style="margin-bottom:6px"><strong style="color:#e94560">'+title+' ['+gts.length+'x'+cds.length+']</strong></div>';
+ h+='<table><tr><th></th>';for(var ci=0;ci<cds.length;ci++)h+='<th style="color:#7b68ee">'+ch[ci]+'</th>';h+='</tr>';
+ for(var gi=0;gi<gts.length;gi++){
+  h+='<tr><td style="color:'+gc[gi]+';background:#0f3460;font-weight:700">GT'+gi+'</td>';
+  var fl=[];if(ic)for(var c2=0;c2<gts.length;c2++)for(var d2=0;d2<cds.length;d2++)fl.push(data[c2][d2]);
+  for(var ci=0;ci<cds.length;ci++){
+   var v=data[gi][ci],bg='#222244',fg='#ccc';
+   if(ic){var mn=Math.min.apply(null,fl),mx=Math.max.apply(null,fl);var n=mx>mn?(v-mn)/(mx-mn):0.5;var r=Math.round(26+(13-26)*n),gr=Math.round(138+(17-138)*n),bl=Math.round(74+(23-74)*n);bg='rgb('+r+','+gr+','+bl+')';fg=n<0.5?'#fff':'#ccc';}
+   else{var a=0.25+v*0.75;var r=Math.round(83*(1-a)+13*a),gr=Math.round(52*(1-a)+17*a),bl=Math.round(131*(1-a)+23*a);bg='rgb('+r+','+gr+','+bl+')';fg=a>0.5?'#fff':'#ccc';}
+   h+='<td style="background:'+bg+';color:'+fg+'">'+fmt(v)+'</td>';
+  }
+  h+='</tr>';
+ }
+ h+='</table>';return h;
+}
+function bM(title,mat,gc,ch){
+ var h='';if(title)h+='<div style="margin-bottom:6px"><strong style="color:#e94560">'+title+' ['+gts.length+'x'+cds.length+']</strong></div>';
+ h+='<table><tr><th></th>';for(var ci=0;ci<cds.length;ci++)h+='<th style="color:#7b68ee">'+ch[ci]+'</th>';h+='</tr>';
+ for(var gi=0;gi<gts.length;gi++){
+  h+='<tr><td style="color:'+gc[gi]+';background:#0f3460;font-weight:700">GT'+gi+'</td>';
+  for(var ci=0;ci<cds.length;ci++){var v=mat[gi][ci],bg='#222244',fg='#888',sy='.';if(v===1){var sm=mat[0][ci]+mat[1][ci];if(sm>1){bg='#ff6b36';fg='#fff';sy='!';}else{bg='#1a8a4a';fg='#fff';sy='OK';}}h+='<td style="background:'+bg+';color:'+fg+'">'+sy+'</td>';}
+  h+='</tr>';
+ }
+ h+='</table>';return h;
+}
+function sS(idx){
+ cs=idx;
+ for(var ci=0;ci<cds.length;ci++){cds[ci].sel=false;cds[ci].conf=false;cds[ci].agt=-1;}
+ var info='',title='',mh='',sh='';
+ if(idx===0){title='Initial: GTs & Candidates';info='2 GTs (red) + 8 candidates (purple) from find_3_positive rough filter.';mh='';}
+ else if(idx===1){title='Step 1: Pairwise IoU';info='Compute IoU for every (GT, candidate) pair. C0 matches GT0 well ('+iou[0][0].toFixed(2)+'), C4 matches GT1 well ('+iou[1][4].toFixed(2)+').';mh=bT('Pairwise IoU',iou,f2,['#e94560','#ff6b36'],['C0','C1','C2','C3','C4','C5','C6','C7']);}
+ else if(idx===2){title='Step 2: Cls Loss & IoU Loss';info='<span class="frm">cls_loss = BCE(sig(cls)*sig(obj), gt)</span><br><span class="frm">iou_loss = -log(IoU)</span><br>C3 has low confidence, high cls_loss for both GTs.';mh='<div style="margin-bottom:10px"><strong style="color:#e94560">cls_loss</strong></div>'+bT(null,cLoss,f2,['#e94560','#ff6b36'],['C0','C1','C2','C3','C4','C5','C6','C7'])+'<div style="margin:14px 0 10px"><strong style="color:#e94560">iou_loss</strong></div>'+bT(null,iLoss,f2,['#e94560','#ff6b36'],['C0','C1','C2','C3','C4','C5','C6','C7']);}
+ else if(idx===3){title='Step 3: Cost Matrix';info='<span class="frm">cost = cls_loss + 3.0 * iou_loss</span><br>Lower cost = better match. C0 best for GT0, C4 best for GT1. C6 has similar costs for both -> <strong style="color:#ff6b36">potential conflict!</strong>';cds[6].conf=true;mh=bT('Cost Matrix',cst,f2,['#e94560','#ff6b36'],['C0','C1','C2','C3','C4','C5','C6','C7'],true);}
+ else if(idx===4){title='Step 4: Dynamic K';info='<strong>Core of SimOTA: dynamic k per GT!</strong><br><span class="frm">dynamic_k = round(sum(top10 IoU))</span><br>GT0 sum='+tk[0].reduce(function(a,b){return a+b;},0).toFixed(1)+' -> k=<strong style="color:#e94560">'+dk[0]+'</strong><br>GT1 sum='+tk[1].reduce(function(a,b){return a+b;},0).toFixed(1)+' -> k=<strong style="color:#ff6b36">'+dk[1]+'</strong><br><br>Higher overall IoU -> more positive samples.';mh='<table><tr><th></th><th style="color:#e94560">GT0</th><th style="color:#ff6b36">GT1</th></tr><tr><td style="color:#999">k=</td><td style="background:#e9456033;color:#e94560;font-size:1.4rem;text-align:center;padding:10px 20px">'+dk[0]+'</td><td style="background:#ff6b3633;color:#ff6b36;font-size:1.4rem;text-align:center;padding:10px 20px">'+dk[1]+'</td></tr></table>';sh='<div class="stat-card"><div class="label">GT0 k</div><div class="value" style="color:#e94560">'+dk[0]+'</div></div><div class="stat-card"><div class="label">GT1 k</div><div class="value" style="color:#ff6b36">'+dk[1]+'</div></div>';}
+ else if(idx===5){
+  title='Step 5: Greedy Matching';
+  var i5='<strong>Each GT selects top-k candidates with min cost.</strong><br><span style="color:#1a8a4a">GT0 selects: C0, C1, C2';if(dk[0]>3)i5+=', C7';i5+='</span><br><span style="color:#1a8a4a">GT1 selects: C4, C5';if(dk[1]>2)i5+=', C6';if(dk[1]>3)i5+=', C3';i5+='</span>';if(dk[1]>2)i5+='<br><strong style="color:#ff6b36">CONFLICT: C6 claimed by both!</strong> cost[GT0][C6]='+cst[0][6].toFixed(2)+' vs cost[GT1][C6]='+cst[1][6].toFixed(2)+' -> C6 goes to GT1 (lower cost)';
+  info=i5;
+  for(var ci=0;ci<cds.length;ci++){if(fm[ci]){cds[ci].sel=true;cds[ci].agt=mg[ci];}}
+  mh=bM('Matching Matrix',mm,['#e94560','#ff6b36'],['C0','C1','C2','C3','C4','C5','C6','C7']);
+  var n0=0,n1=0;for(var ci2=0;ci2<8;ci2++){if(mg[ci2]===0)n0++;if(mg[ci2]===1)n1++;}
+  sh='<div class="stat-card"><div class="label">GT0 assigned</div><div class="value" style="color:#1a8a4a">'+n0+'</div></div><div class="stat-card"><div class="label">GT1 assigned</div><div class="value" style="color:#1a8a4a">'+n1+'</div></div><div class="stat-card"><div class="label">Total positive</div><div class="value" style="color:#9b59b6">'+(n0+n1)+'</div></div>';
+ }
+ else if(idx===6){
+  title='Done: Final Assignment';
+  info='<strong>SimOTA complete!</strong><br><span style="color:#1a8a4a">Green</span> = positive samples, gray = discarded.<br>vs pure ratio matching: SimOTA adds classification + IoU cost, dynamic k per GT, conflict resolution.<br>Better <strong>pseudo-label quality</strong> in semi-supervised training.';
+  for(var ci=0;ci<cds.length;ci++){if(fm[ci]){cds[ci].sel=true;cds[ci].agt=mg[ci];}}
+  mh=bM('Final Matrix',mm,['#e94560','#ff6b36'],['C0','C1','C2','C3','C4','C5','C6','C7']);
+  var m0=0,m1=0;for(var ci3=0;ci3<8;ci3++){if(mg[ci3]===0)m0++;if(mg[ci3]===1)m1++;}
+  sh='<div class="stat-card"><div class="label">GT0 assigned</div><div class="value" style="color:#1a8a4a">'+m0+'</div></div><div class="stat-card"><div class="label">GT1 assigned</div><div class="value" style="color:#1a8a4a">'+m1+'</div></div><div class="stat-card"><div class="label">Dropped</div><div class="value" style="color:#666">'+(8-m0-m1)+'</div></div>';
+ }
+ document.getElementById('ib').innerHTML='<strong>'+title+'</strong><br>'+info;
+ document.getElementById('mt').textContent=title;
+ document.getElementById('ma').innerHTML=mh;
+ document.getElementById('st').innerHTML=sh;
+ document.getElementById('sn').textContent=(idx+1)+'/'+TS;
+ var cnv=document.getElementById('c');var ctx=cnv.getContext('2d');dB(ctx);dC(ctx);
+ document.getElementById('bp').disabled=idx<=0;
+ document.getElementById('bn').disabled=idx>=TS-1;
+}
+document.getElementById('bn').addEventListener('click',function(){if(cs<TS-1)sS(cs+1);});
+document.getElementById('bp').addEventListener('click',function(){if(cs>0)sS(cs-1);});
+document.getElementById('br').addEventListener('click',function(){sS(0);});
+console.log('SimOTA viz ready');
+sS(0);
+})();}catch(e){var el=document.getElementById('em');if(el){el.style.display='block';el.textContent='Init Error: '+e.message;}}
+</script></body></html>

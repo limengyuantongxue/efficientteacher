@@ -12,6 +12,7 @@ import math
 from torch.nn import functional as F
 from torch.autograd import Variable,Function
 from assigner import YOLOAnchorAssigner
+from assigner import ScaleAwareAssigner
 
 def smooth_BCE(eps=0.1):  # https://github.com/ultralytics/yolov3/issues/238#issuecomment-598028441
     # return positive, negative label smoothing BCE targets
@@ -129,11 +130,26 @@ class ComputeLoss:
         for k in 'na', 'nc', 'nl', 'num_keypoints', 'anchors':
             setattr(self, k, getattr(det, k))
         self.ota = cfg.Loss.assigner_type == 'SimOTA'
+        self.sa = cfg.Loss.assigner_type == 'SaA'
         self.top_k = cfg.Loss.top_k
         self.assigner = YOLOAnchorAssigner(self.na, self.nl, self.anchors, self.anchor_t, det.stride, \
             self.nc, self.num_keypoints, single_targets=self.single_targets, ota=False)
         self.ota_assigner = YOLOAnchorAssigner(self.na, self.nl, self.anchors, self.anchor_t, det.stride, \
             self.nc, self.num_keypoints, single_targets=self.single_targets, ota=self.ota, top_k=self.top_k)
+        self.sa_assigner = ScaleAwareAssigner(
+            nc=self.nc,
+            na=self.na,
+            nl=self.nl,
+            anchors=self.anchors,
+            stride=det.stride,
+            top_k=13,
+            scale_threshold=1024.0,
+            scale_temperature=1.0
+        )
+
+    def set_assigner_debug(self, enabled: bool = True):
+        if self.sa:
+            self.sa_assigner.enable_debug_collect() if enabled else self.sa_assigner.disable_debug_collect()
 
     def default_loss(self, p, targets):
         device = targets.device
@@ -302,9 +318,106 @@ class ComputeLoss:
         # loss_dict = dict(box = lbox, obj = lobj, cls = lcls)
         return loss * bs, loss_dict
 
+    def sa_loss(self, p, targets):
+        device = targets.device
+        lcls, lbox, lobj = torch.zeros(1, device=device), torch.zeros(1, device=device), torch.zeros(1, device=device)
+        bs, as_, gjs, gis, sa_targets, anchors = self.sa_assigner(p, targets)
+        pre_gen_gains = [torch.tensor(pp.shape, device=device)[[3, 2, 3, 2]] for pp in p]
+
+        # Losses
+        for i, pi in enumerate(p):  # layer index, layer predictions
+            b, a, gj, gi = bs[i], as_[i], gjs[i], gis[i]  # image, anchor, gridy, gridx
+            tobj = torch.zeros_like(pi[..., 0], device=device)  # target obj
+
+            n = b.shape[0]  # number of targets
+            if n:
+                ps = pi[b, a, gj, gi]  # prediction subset corresponding to targets
+
+                # Regression
+                grid = torch.stack([gi, gj], dim=1)
+                pxy = ps[:, :2].sigmoid() * 2. - 0.5
+                #pxy = ps[:, :2].sigmoid() * 3. - 1.
+                pwh = (ps[:, 2:4].sigmoid() * 2) ** 2 * anchors[i]
+                pbox = torch.cat((pxy, pwh), 1)  # predicted box
+                selected_tbox = sa_targets[i][:, 2:6] * pre_gen_gains[i]
+                selected_tbox[:, :2] -= grid
+                iou = bbox_iou(pbox.T, selected_tbox, x1y1x2y2=False, CIoU=True)  # iou(prediction, target)
+                lbox += (1.0 - iou).mean()  # iou loss
+
+                # Objectness
+                tobj[b, a, gj, gi] = (1.0 - self.gr) + self.gr * iou.detach().clamp(0).type(tobj.dtype)  # iou ratio
+
+                # Classification
+                selected_tcls = sa_targets[i][:, 1].long()
+                if self.nc > 1:  # cls loss (only if multiple classes)
+                    t = torch.full_like(ps[:, 5:5+self.nc], self.cn, device=device)  # targets
+                    t[range(n), selected_tcls] = self.cp
+                    lcls += self.BCEcls(ps[:, 5:5+self.nc], t)  # BCE
+
+            obji = self.BCEobj(pi[...,-1], tobj)
+            lobj += obji * self.balance[i]  # obj loss
+            if self.autobalance:
+                self.balance[i] = self.balance[i] * 0.9999 + 0.0001 / obji.detach().item()
+
+        tcls, tbox, indices, anchors = self.assigner(p, targets)  # targets
+        for i, pi in enumerate(p):  # layer index, layer predictions
+            b, a, gj, gi = indices[i]  # image, anchor, gridy, gridx
+            tobj = torch.zeros_like(pi[..., 0], device=device)  # target obj
+
+            n = b.shape[0]  # number of targets
+            if n:
+                ps = pi[b, a, gj, gi]  # prediction subset corresponding to targets
+
+                # Regression
+                pxy = ps[:, :2].sigmoid() * 2. - 0.5
+                pwh = (ps[:, 2:4].sigmoid() * 2) ** 2 * anchors[i]
+                pbox = torch.cat((pxy, pwh), 1)  # predicted box
+                iou = bbox_iou(pbox.T, tbox[i], x1y1x2y2=False, CIoU=True)  # iou(prediction, target)
+                lbox += (1.0 - iou).mean()  # iou loss
+
+                # Objectness
+                score_iou = iou.detach().clamp(0).type(tobj.dtype)
+                if self.sort_obj_iou:
+                    sort_id = torch.argsort(score_iou)
+                    b, a, gj, gi, score_iou = b[sort_id], a[sort_id], gj[sort_id], gi[sort_id], score_iou[sort_id]
+                tobj[b, a, gj, gi] = (1.0 - self.gr) + self.gr * score_iou  # iou ratio
+
+                # Landmark
+                if self.num_keypoints >0:
+                    plandmarks = ps[:,-self.num_keypoints*2:]
+                    for idx in range(self.num_keypoints):
+                        plandmarks[:, (0+(2*idx)):(2+(2*idx))] = plandmarks[:, (0+(2*idx)):(2+(2*idx))] * anchors[i]
+                    lmark = lmark + self.LandMarkLoss(plandmarks, tlandmarks[i], lmks_mask[i])
+
+                # Classification
+                if self.nc > 1:  # cls loss (only if multiple classes)
+                    t = torch.full_like(ps[:, 5:5+self.nc], self.cn, device=device)  # targets
+                    t[range(n), tcls[i]] = self.cp
+                    lcls += self.BCEcls(ps[:, 5:5+self.nc], t)  # BCE
+
+                # Append targets to text file
+                # with open('targets.txt', 'a') as file:
+                #     [file.write('%11.5g ' * 4 % tuple(x) + '\n') for x in torch.cat((txy[i], twh[i]), 1)]
+
+            obji = self.BCEobj(pi[..., 4], tobj)
+            lobj += obji * self.balance[i]  # obj loss
+        if self.autobalance:
+            self.balance = [x / self.balance[self.ssi] for x in self.balance]
+        lbox *= self.box_w
+        lobj *= self.obj_w
+        lcls *= self.cls_w
+        bs = tobj.shape[0]  # batch size
+
+        loss = lbox + lobj + lcls
+        loss_dict = dict(box=lbox, obj=lobj, cls=lcls, loss=loss * bs)
+        # loss_dict = dict(box = lbox, obj = lobj, cls = lcls)
+        return loss * bs, loss_dict
+
     def __call__(self, p, targets):  # predictions, targets, model
         if self.ota:
             return self.ota_loss(p, targets)
+        elif self.sa:
+            return self.sa_loss(p, targets)
         else:
             return self.default_loss(p, targets)
 
