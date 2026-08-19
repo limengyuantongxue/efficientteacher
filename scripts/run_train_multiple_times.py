@@ -1,3 +1,5 @@
+import warnings
+warnings.filterwarnings('ignore', category=FutureWarning)
 import os
 import sys
 import subprocess
@@ -26,8 +28,8 @@ def run_train_once(run_number, total_runs):
     
     start_time = time.time()
     
-    # 运行train.py
-    cmd = [sys.executable, os.path.join(ROOT, "train.py")]
+    # 运行train.py，禁用警告
+    cmd = [sys.executable, '-W', 'ignore', os.path.join(ROOT, "train.py")]
     process = subprocess.Popen(cmd, cwd=ROOT)
     process.wait()
     

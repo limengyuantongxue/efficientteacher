@@ -142,8 +142,8 @@ class ComputeLoss:
             nl=self.nl,
             anchors=self.anchors,
             stride=det.stride,
-            top_k=13,
-            scale_threshold=1024.0,
+            top_k=self.top_k,
+            scale_threshold=409.0,
             scale_temperature=1.0
         )
 
@@ -259,7 +259,7 @@ class ComputeLoss:
                     t[range(n), selected_tcls] = self.cp
                     lcls += self.BCEcls(ps[:, 5:5+self.nc], t)  # BCE
 
-            obji = self.BCEobj(pi[...,-1], tobj)
+            obji = self.BCEobj(pi[...,4], tobj)  # 重跑，改成4
             lobj += obji * self.balance[i]  # obj loss
             if self.autobalance:
                 self.balance[i] = self.balance[i] * 0.9999 + 0.0001 / obji.detach().item()
@@ -354,7 +354,7 @@ class ComputeLoss:
                     t[range(n), selected_tcls] = self.cp
                     lcls += self.BCEcls(ps[:, 5:5+self.nc], t)  # BCE
 
-            obji = self.BCEobj(pi[...,-1], tobj)
+            obji = self.BCEobj(pi[...,4], tobj)  # 重跑，改成4
             lobj += obji * self.balance[i]  # obj loss
             if self.autobalance:
                 self.balance[i] = self.balance[i] * 0.9999 + 0.0001 / obji.detach().item()

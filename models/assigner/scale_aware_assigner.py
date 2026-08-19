@@ -113,7 +113,7 @@ class ScaleAwareAssigner(nn.Module):
                  na=3,
                  nl=3,
                  anchors=[],
-                 anchor_t=4.0,
+                 anchor_t=10.0,
                  stride=None,
                  top_k=13,
                  iou_weight=3.0,
@@ -134,7 +134,7 @@ class ScaleAwareAssigner(nn.Module):
         self.scale_temperature = scale_temperature
         self._debug_data = []
         self._collect_debug = False
-        self.iou_t = 0.45
+        self.iou_t = 0.50
 
 
     def enable_debug_collect(self):
@@ -236,7 +236,7 @@ class ScaleAwareAssigner(nn.Module):
             # txywh 已经是 (cx, cy, w, h) 格式
             # pxyxys 是 (x1,y1,x2,y2) 格式，需要转成 (cx,cy,w,h)
             pxywh_for_nwd = xyxy2xywh(pxyxys)
-            nwd = compute_nwd_similarity(txywh, pxywh_for_nwd, C=100.0)
+            nwd = compute_nwd_similarity(txywh, pxywh_for_nwd, C=50.0)
 
             # 混合相似度 = α·IoU + (1-α)·NWD
             mixed_sim = alpha.unsqueeze(1) * pair_wise_iou + (1 - alpha.unsqueeze(1)) * nwd
@@ -352,7 +352,7 @@ class ScaleAwareAssigner(nn.Module):
                 matching_anchs[i] = torch.tensor([], device=device, dtype=torch.int64)
 
         return matching_bs, matching_as, matching_gjs, matching_gis, matching_targets, matching_anchs
-
+        #  matching_bs, matching_as, matching_gjs, matching_gis分别对应incides中的b,a,gj,gi，matching_targets是归一化完整的GT,形状 [n, 6]: [img_id, cls, x, y, w, h]，matching_anchs是对应的anchor尺寸，形状 [n, 2]: [w, h]
 
     def _count_basic_positives(self, p, targets):
         na, nt = self.na, targets.shape[0]

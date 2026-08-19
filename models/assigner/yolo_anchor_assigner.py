@@ -195,8 +195,8 @@ class YOLOAnchorAssigner(nn.Module):
             num_gt = this_target.shape[0]
             cls_preds_ = (
                 p_cls.float().unsqueeze(0).repeat(num_gt, 1, 1).sigmoid_()
-                # * p_obj.unsqueeze(0).repeat(num_gt, 1, 1).sigmoid_()
-                * p_obj_e2e.unsqueeze(0).repeat(num_gt, 1, 1).sigmoid_()
+                 * p_obj.unsqueeze(0).repeat(num_gt, 1, 1).sigmoid_()
+                #* p_obj_e2e.unsqueeze(0).repeat(num_gt, 1, 1).sigmoid_()  # 删掉重跑
             )
 
             y = cls_preds_.sqrt_()
@@ -226,7 +226,7 @@ class YOLOAnchorAssigner(nn.Module):
                 matching_matrix[cost_argmin, anchor_matching_gt > 1] = 1.0
             fg_mask_inboxes = matching_matrix.sum(0) > 0.0
             matched_gt_inds = matching_matrix[:, fg_mask_inboxes].argmax(0)
-        
+            from_which_layer =from_which_layer.to(fg_mask_inboxes.device)
             from_which_layer = from_which_layer[fg_mask_inboxes]
             all_b = all_b[fg_mask_inboxes]
             all_a = all_a[fg_mask_inboxes]

@@ -184,7 +184,7 @@ _C.Dataset.label_path=''
 _C.Dataset.batch_size=96 #训练时的batch图片数，8卡训练时每张卡获得96/8=12张图，以此类推
 _C.Dataset.img_size=640 #训练时将图片resize的尺寸
 _C.Dataset.rect=False #是否使用长方形进行训练
-_C.Dataset.workers=6 #dataloader读图时使用的线程数，增加可一定程度加速训练
+_C.Dataset.workers=8 #dataloader读图时使用的线程数，增加可一定程度加速训练
 _C.Dataset.quad=False
 # _C.Dataset.use_bgr=False
 # _C.Dataset.lp_order=False

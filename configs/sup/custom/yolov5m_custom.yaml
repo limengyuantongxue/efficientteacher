@@ -3,7 +3,7 @@
 # Parameters
 project: '/runs_yolov5'
 adam: False
-epochs: 300
+epochs: 200
 weights: ''
 prune_finetune: False
 linear_lr: True
@@ -38,7 +38,8 @@ Loss:
   cls: 0.3
   obj: 0.7
   anchor_t: 4.0
-  assigner_type: 'SaA'
+  assigner_type : 'SaA'
+  top_k: 13
 
 Dataset:
   data_name: 'coco'
@@ -49,4 +50,4 @@ Dataset:
   np: 0 #number of keypoints
   names: [ 'body_broken', 'eraser_broken', 'NG' ]
   img_size: 640
-  batch_size: 6
+  batch_size: 48
