@@ -4,7 +4,7 @@ import torch.nn as nn
 import numpy as np
 import torch.nn.functional as F
 from utils.general import xywh2xyxy, box_iou
-
+from utils.metrics import wh_iou
 class YOLOAnchorAssigner(nn.Module):
     '''Adaptive Training Sample Selection Assigner'''
     def __init__(self,
@@ -342,8 +342,9 @@ class YOLOAnchorAssigner(nn.Module):
             if nt:  # 真值数量大于1
                 # Matches
                 r = t[:, :, 4:6] / anchors[:, None]  # wh ratio
-                j = torch.max(r, 1. / r).max(2)[0] < self.anchor_t  # compare 锚框与真是目标的尺寸兼容性筛选核心逻辑
+                # j = torch.max(r, 1. / r).max(2)[0] < self.anchor_t  # compare 锚框与真是目标的尺寸兼容性筛选核心逻辑
                 # j = wh_iou(anchors, t[:, 4:6]) > model.hyp['iou_t']  # iou(3,n)=wh_iou(anchors(3,2), gwh(n,2))
+                j = wh_iou(anchors, t[:, :,4:6]) > 0.50  # 基于iou静态匹配
                 t = t[j]  # filter
 
                 # Offsets

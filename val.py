@@ -468,8 +468,8 @@ def run(data,
 def parse_opt():
     parser = argparse.ArgumentParser()
     parser.add_argument('--data', type=str, default=ROOT/'pencil_coco.yaml', help='dataset.yaml path')
-    parser.add_argument('--weights', nargs='+', type=str, default=ROOT/'D:/code/pencil_detect_C++/efficientteacher/exp_ssod/exp34/weights/best.pt', help='model.pt path(s)')
-    parser.add_argument('--batch-size', type=int, default=8, help='batch size')
+    parser.add_argument('--weights', nargs='+', type=str, default="D:\\runs_yolov5\\exp66\\weights\\best.pt", help='model.pt path(s)')
+    parser.add_argument('--batch-size', type=int, default=48, help='batch size')
     parser.add_argument('--imgsz', '--img', '--img-size', type=int, default=640, help='inference size (pixels)')
     parser.add_argument('--conf-thres', type=float, default=0.001, help='confidence threshold')
     parser.add_argument('--iou-thres', type=float, default=0.6, help='NMS IoU threshold')
@@ -488,7 +488,7 @@ def parse_opt():
     parser.add_argument('--half', action='store_true', help='use FP16 half-precision inference')
     parser.add_argument('--val-ssod',  action='store_true', help='trigger when val semi-supervised') 
     parser.add_argument('--num-points',  type=int, default=0, help='num of keypoints') 
-    parser.add_argument('--cfg', type=str, default='', help='The config file used for validation') 
+    parser.add_argument('--cfg', type=str, default=r'D:\个人文件\文献\毕业论文参考\code\efficientteacher\configs\sup\custom\yolov5m_custom.yaml', help='The config file used for validation') 
     parser.add_argument('--val-dp1000',  action='store_true', help='trigger when val dp1000 model') 
     opt = parser.parse_args()
     if opt.cfg == '':

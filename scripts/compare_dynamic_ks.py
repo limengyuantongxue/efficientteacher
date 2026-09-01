@@ -119,8 +119,8 @@ def generate_excel(records, output):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--debug_dir", type=str, required=True)
-    ap.add_argument("--output", type=str, default="compare_dynamic_ks.xlsx")
+    ap.add_argument("--debug_dir", type=str, default="D:\\runs_yolov5\\exp65\\dynamic_ks_debug")
+    ap.add_argument("--output", type=str, default="D:\\个人文件\\文献\\毕业论文参考\\output\\compare_dynamic_ks_exp65.xlsx")
     ap.add_argument("--max_per_bucket", type=int, default=300)
     ap.add_argument("--no_sample", action="store_true")
     args = ap.parse_args()

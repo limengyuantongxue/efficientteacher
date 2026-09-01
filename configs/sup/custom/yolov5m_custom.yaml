@@ -4,7 +4,8 @@
 project: '/runs_yolov5'
 adam: False
 epochs: 200
-weights: ''
+
+weights: ""
 prune_finetune: False
 linear_lr: True
 hyp:
@@ -38,7 +39,7 @@ Loss:
   cls: 0.3
   obj: 0.7
   anchor_t: 4.0
-  assigner_type : 'SaA'
+  
   top_k: 13
 
 Dataset:
