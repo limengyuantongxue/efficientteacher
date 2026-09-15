@@ -131,6 +131,7 @@ class ComputeLoss:
             setattr(self, k, getattr(det, k))
         self.ota = cfg.Loss.assigner_type == 'SimOTA'
         self.sa = cfg.Loss.assigner_type == 'SaA'
+        self.img_size = int(getattr(cfg.Dataset, 'img_size', 640))
         self.top_k = cfg.Loss.top_k
         self.assigner = YOLOAnchorAssigner(self.na, self.nl, self.anchors, self.anchor_t, det.stride, \
             self.nc, self.num_keypoints, single_targets=self.single_targets, ota=False)
@@ -321,7 +322,7 @@ class ComputeLoss:
     def sa_loss(self, p, targets):
         device = targets.device
         lcls, lbox, lobj = torch.zeros(1, device=device), torch.zeros(1, device=device), torch.zeros(1, device=device)
-        bs, as_, gjs, gis, sa_targets, anchors = self.sa_assigner(p, targets)
+        bs, as_, gjs, gis, sa_targets, anchors = self.sa_assigner(p, targets, img_size=self.img_size)
         pre_gen_gains = [torch.tensor(pp.shape, device=device)[[3, 2, 3, 2]] for pp in p]
 
         # Losses

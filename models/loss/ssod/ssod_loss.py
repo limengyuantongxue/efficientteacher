@@ -15,7 +15,7 @@ from torch.autograd import Variable,Function
 import numpy as np
 # from loss.yolox_loss import pairwise_bbox_iou
 from utils.general import xywh2xyxy, box_iou
-from assigner import YOLOAnchorAssigner
+from assigner import YOLOAnchorAssigner, ScaleAwareAssigner
 # from torch.cuda.amp import autocast
 
 def smooth_BCE(eps=0.1):  # https://github.com/ultralytics/yolov3/issues/238#issuecomment-598028441
@@ -70,6 +70,20 @@ class ComputeStudentMatchLoss():
             setattr(self, k, getattr(det, k))
         self.assigner = YOLOAnchorAssigner(self.na, self.nl, self.anchors, self.anchor_t, det.stride, \
             self.nc, self.num_keypoints, single_targets=self.single_targets, ota=self.use_ota)
+        self.sa = getattr(cfg.Loss, 'assigner_type', 'TAL') == 'SaA'
+        self.img_size = int(getattr(cfg.Dataset, 'img_size', 640))
+        self.sa_scale_threshold = float(getattr(cfg.Loss, 'scale_threshold', 409.0))
+        self.sa_scale_temperature = float(getattr(cfg.Loss, 'scale_temperature', 1.0))
+        self.sa_top_k = int(getattr(cfg.Loss, 'top_k', 13))
+        if self.sa:
+            self.sa_assigner = ScaleAwareAssigner(
+                nc=self.nc, na=self.na, nl=self.nl, anchors=self.anchors,
+                stride=det.stride, top_k=self.sa_top_k,
+                scale_threshold=self.sa_scale_threshold,
+                scale_temperature=self.sa_scale_temperature,
+            )
+        else:
+            self.sa_assigner = None
     
     # def build_single_targets(self, p, targets):
     #     # Build targets for compute_loss(), input targets(image,class,x,y,w,h)
@@ -287,8 +301,102 @@ class ComputeStudentMatchLoss():
         loss_dict = dict(ss_box = lbox, ss_obj = lobj, ss_cls = lcls)
         return loss * bs, loss_dict
 
+    def sa_default_loss(self, p, targets):
+        """Semi-supervised loss using the scale-aware (SaA) assigner.
+
+        Mirrors default_loss but consumes the OTA-style 6/7-tuple returned by
+        ScaleAwareAssigner: (bs, as_, gjs, gis, targets, anchors[, tscores]).
+        """
+        device = targets.device
+        lcls, lbox, lobj = torch.zeros(1, device=device), torch.zeros(1, device=device), torch.zeros(1, device=device)
+        pre_gen_gains = [torch.tensor(pp.shape, device=device)[[3, 2, 3, 2]] for pp in p]
+
+        if targets.shape[1] > 6:
+            certain_targets, uc_targets, uc_obj_targets, uc_cls_targets = self.select_targets(targets)
+            # certain (labeled) branch —— 6 列，不携带伪标签分数
+            bs, as_, gjs, gis, sa_tgts, anch = self.sa_assigner(p, certain_targets[:, :6], img_size=self.img_size)
+            # uncertain (pseudo-label) branches —— 携带分数
+            uc_bs, uc_as_, uc_gjs, uc_gis, uc_tgts, uc_anch, uc_ts = self.sa_assigner(
+                p, uc_targets, img_size=self.img_size, with_pseudo_score=True)
+            obs, oas, ogjs, ogis, otgts, oanch, ots = self.sa_assigner(
+                p, uc_obj_targets, img_size=self.img_size, with_pseudo_score=True)
+            cbs, cas, cgjs, cgis, ctgts, canch, cts = self.sa_assigner(
+                p, uc_cls_targets, img_size=self.img_size, with_pseudo_score=True)
+        else:
+            bs, as_, gjs, gis, sa_tgts, anch = self.sa_assigner(p, targets, img_size=self.img_size)
+
+        for i, pi in enumerate(p):
+            b, a, gj, gi = bs[i], as_[i], gjs[i], gis[i]
+            tobj = torch.zeros_like(pi[..., 0], device=device)
+            n = b.shape[0]
+            if n:
+                ps = pi[b, a, gj, gi]
+                grid = torch.stack([gi, gj], dim=1).float()
+                pxy = ps[:, :2].sigmoid() * 2. - 0.5
+                pwh = (ps[:, 2:4].sigmoid() * 2) ** 2 * anch[i]
+                pbox = torch.cat((pxy, pwh), 1)
+                selected_tbox = sa_tgts[i][:, 2:6] * pre_gen_gains[i]
+                selected_tbox[:, :2] -= grid
+                iou = bbox_iou(pbox.T, selected_tbox, x1y1x2y2=False, CIoU=True)
+                lbox += (1.0 - iou).mean()
+                tobj[b, a, gj, gi] = (1.0 - self.gr) + self.gr * iou.detach().clamp(0).type(tobj.dtype)
+                selected_tcls = sa_tgts[i][:, 1].long()
+                if self.nc > 1:
+                    t = torch.full_like(ps[:, 5:], self.cn, device=device)
+                    t[range(n), selected_tcls] = self.cp
+                    lcls += self.BCEcls(ps[:, 5:], t)
+
+            if targets.shape[1] > 6:
+                # uncertain label cal obj loss
+                ucb, uca, ucgj, ucgi = uc_bs[i], uc_as_[i], uc_gjs[i], uc_gis[i]
+                n = ucb.shape[0]
+                if n:
+                    if self.ignore_obj:
+                        tobj[ucb, uca, ucgj, ucgi] = -1
+                    else:
+                        tobj[ucb, uca, ucgj, ucgi] = uc_ts[i].type(tobj.dtype)
+
+                if self.pseudo_label_with_bbox:
+                    ob, oa, ogj, ogi = obs[i], oas[i], ogjs[i], ogis[i]
+                    n = ob.shape[0]
+                    if n:
+                        uc_ps = pi[ob, oa, ogj, ogi]
+                        grid_o = torch.stack([ogi, ogj], dim=1).float()
+                        pxy = uc_ps[:, :2].sigmoid() * 2. - 0.5
+                        pwh = (uc_ps[:, 2:4].sigmoid() * 2) ** 2 * oanch[i]
+                        pbox = torch.cat((pxy, pwh), 1)
+                        obox = otgts[i][:, 2:6] * pre_gen_gains[i]
+                        obox[:, :2] -= grid_o
+                        iou = bbox_iou(pbox.T, obox, x1y1x2y2=False, CIoU=True)
+                        lbox += (1.0 - iou).mean()
+
+                if self.pseudo_label_with_cls:
+                    cb, ca, cgj, cgi = cbs[i], cas[i], cgjs[i], cgis[i]
+                    n = cb.shape[0]
+                    if n:
+                        uc_ps = pi[cb, ca, cgj, cgi]
+                        tcls = ctgts[i][:, 1].long()
+                        if self.nc > 1:
+                            t = torch.full_like(uc_ps[:, 5:], self.cn, device=device)
+                            t[range(n), tcls] = self.cp
+                            lcls += self.BCEcls(uc_ps[:, 5:], t)
+
+            valid_mask = tobj >= 0
+            obji = self.BCEobj(pi[..., 4][valid_mask], tobj[valid_mask])
+            lobj += obji * self.balance[i]
+
+        lbox *= self.box_w
+        lobj *= self.obj_w
+        lcls *= self.cls_w
+        bs_ = tobj.shape[0]
+        loss = lbox + lobj + lcls
+        loss_dict = dict(ss_box=lbox, ss_obj=lobj, ss_cls=lcls)
+        return loss * bs_, loss_dict
+
     def __call__(self, p, targets):
-        if self.use_ota == False:
+        if self.sa and not self.use_ota:
+            loss, loss_dict = self.sa_default_loss(p, targets)
+        elif self.use_ota == False:
             loss, loss_dict = self.default_loss(p, targets)
         else:
             loss, loss_dict = self.ota_loss(p, targets)

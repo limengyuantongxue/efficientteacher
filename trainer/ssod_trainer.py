@@ -163,6 +163,14 @@ class SSODTrainer(Trainer):
 
             del ckpt, csd
         self.epoch = self.start_epoch
+        # Fix: resume 时若断点已超过 burn_epochs，原代码只在 epoch==burn_epochs 时创建 semi_ema，
+        # 导致 resume 后 semi_ema 恒为 None，after_epoch 里 update_decay 崩溃。此处补建。
+        if self.semi_ema is None and self.cfg.hyp.burn_epochs > 0 and self.epoch >= self.cfg.hyp.burn_epochs:
+            if self.cosine_ema:
+                self.semi_ema = CosineEMA(self.ema.ema, decay_start=self.cfg.SSOD.ema_rate,
+                                          total_epoch=self.epochs - self.cfg.hyp.burn_epochs)
+            else:
+                self.semi_ema = SemiSupModelEMA(self.ema.ema, self.cfg.SSOD.ema_rate)
         # self.ema.update_decay(self.epoch, self.cfg.hyp.burn_epochs)
         self.model_type = self.model.model_type
 
@@ -325,7 +333,7 @@ class SSODTrainer(Trainer):
         if self.epoch >= self.cfg.hyp.burn_epochs:
             if self.model_type == 'tal':
                 self.compute_un_sup_loss.cur_epoch = self.epoch - self.cfg.hyp.burn_epochs
-            if self.cosine_ema:
+            if self.cosine_ema and self.semi_ema is not None:
                 self.semi_ema.update_decay(self.epoch - self.cfg.hyp.burn_epochs)        
         if self.RANK in [-1, 0]:
             # mAP

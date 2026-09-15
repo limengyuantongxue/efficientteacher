@@ -170,6 +170,8 @@ _C.Loss.use_gfl=False
 #TAL使用的loss参数
 _C.Loss.top_k=13
 _C.Loss.assigner_type='TAL' #TAL/SimOTA/AnchorBased/ATSS
+_C.Loss.scale_threshold=409.0 # SaA 尺度区分阈值(像素面积)，约 0.001*img_size^2
+_C.Loss.scale_temperature=1.0 # SaA alpha sigmoid temperature
 _C.Loss.embedding=64 #embedding长度
 
 

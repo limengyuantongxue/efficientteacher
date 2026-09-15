@@ -35,7 +35,7 @@ WORLD_SIZE = int(os.getenv('WORLD_SIZE', 1))
 
 def parse_opt(known=False):
     parser = argparse.ArgumentParser()
-    parser.add_argument('--cfg', type=str, default=r'D:\个人文件\文献\毕业论文参考\code\efficientteacher\configs\sup\custom\yolov5m_custom.yaml', \
+    parser.add_argument('--cfg', type=str, default=r'D:\个人文件\文献\毕业论文参考\code\efficientteacher\configs\ssod\custom\yolov5m_custom_ssod_saa.yaml', \
                         help='model.yaml path')
     parser.add_argument("opts",help="Modify config options using the command-line",default=None,nargs=argparse.REMAINDER)
     parser.add_argument('--local_rank', type=int, default=-1, help='DDP parameter, do not modify')

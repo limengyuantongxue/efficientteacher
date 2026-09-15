@@ -150,7 +150,7 @@ class ScaleAwareAssigner(nn.Module):
         self._debug_data.clear()
 
     @torch.no_grad()
-    def forward(self, p, targets, img_size=640):
+    def forward(self, p, targets, img_size=640, with_pseudo_score=False):
         """
         Args:
             p: list of layer predictions [(B, na, ny, nx, no), ...]
@@ -166,7 +166,11 @@ class ScaleAwareAssigner(nn.Module):
             matching_anchs: [nl], 每层匹配的 anchor 尺寸
         """
         # Step 1: 先用 find_3_positive 筛出候选正样本
-        indices, anch = self._find_3_positive(p, targets)
+        if with_pseudo_score:
+            indices, anch, tscore = self._find_3_positive_with_score(p, targets)
+        else:
+            indices, anch = self._find_3_positive(p, targets)
+            tscore = None
 
         matching_bs = [[] for _ in range(self.nl)]
         matching_as = [[] for _ in range(self.nl)]
@@ -174,6 +178,7 @@ class ScaleAwareAssigner(nn.Module):
         matching_gis = [[] for _ in range(self.nl)]
         matching_targets = [[] for _ in range(self.nl)]
         matching_anchs = [[] for _ in range(self.nl)]
+        matching_tscores = [[] for _ in range(self.nl)] if with_pseudo_score else None
 
         for batch_idx in range(p[0].shape[0]):
             b_idx = targets[:, 0] == batch_idx
@@ -188,6 +193,7 @@ class ScaleAwareAssigner(nn.Module):
             # 收集所有层的候选预测
             pxyxys, p_cls, p_obj, from_which_layer = [], [], [], []
             all_b, all_a, all_gj, all_gi, all_anch = [], [], [], [], []
+            all_tscore = [] if with_pseudo_score else None
 
             for i, pi in enumerate(p):
                 b, a, gj, gi = indices[i]
@@ -198,6 +204,8 @@ class ScaleAwareAssigner(nn.Module):
                 all_gj.append(gj)
                 all_gi.append(gi)
                 all_anch.append(anch[i][idx])
+                if with_pseudo_score:
+                    all_tscore.append(tscore[i][idx])
                 from_which_layer.append(torch.ones(len(b), device=b.device) * i)
 
                 fg_pred = pi[b, a, gj, gi]
@@ -224,6 +232,8 @@ class ScaleAwareAssigner(nn.Module):
             all_gj = torch.cat(all_gj, dim=0)
             all_gi = torch.cat(all_gi, dim=0)
             all_anch = torch.cat(all_anch, dim=0)
+            if with_pseudo_score:
+                all_tscore = torch.cat(all_tscore, dim=0)
 
             # Step 2: 计算尺度感知的 IoU + NWD 混合成本
             pair_wise_iou = box_iou(txyxy, pxyxys)
@@ -322,6 +332,8 @@ class ScaleAwareAssigner(nn.Module):
             all_gj = all_gj[fg_mask_inboxes]
             all_gi = all_gi[fg_mask_inboxes]
             all_anch = all_anch[fg_mask_inboxes]
+            if with_pseudo_score:
+                all_tscore = all_tscore[fg_mask_inboxes]
             this_target = this_target[matched_gt_inds]
 
             for i in range(self.nl):
@@ -332,6 +344,8 @@ class ScaleAwareAssigner(nn.Module):
                 matching_gis[i].append(all_gi[layer_idx])
                 matching_targets[i].append(this_target[layer_idx])
                 matching_anchs[i].append(all_anch[layer_idx])
+                if with_pseudo_score:
+                    matching_tscores[i].append(all_tscore[layer_idx])
 
         # 转换为每层 Tensor
         for i in range(self.nl):
@@ -342,6 +356,8 @@ class ScaleAwareAssigner(nn.Module):
                 matching_gis[i] = torch.cat(matching_gis[i], dim=0)
                 matching_targets[i] = torch.cat(matching_targets[i], dim=0)
                 matching_anchs[i] = torch.cat(matching_anchs[i], dim=0)
+                if with_pseudo_score:
+                    matching_tscores[i] = torch.cat(matching_tscores[i], dim=0)
             else:
                 device = p[0].device
                 matching_bs[i] = torch.tensor([], device=device, dtype=torch.int64)
@@ -350,7 +366,11 @@ class ScaleAwareAssigner(nn.Module):
                 matching_gis[i] = torch.tensor([], device=device, dtype=torch.int64)
                 matching_targets[i] = torch.tensor([], device=device, dtype=torch.int64)
                 matching_anchs[i] = torch.tensor([], device=device, dtype=torch.int64)
+                if with_pseudo_score:
+                    matching_tscores[i] = torch.tensor([], device=device, dtype=torch.float32)
 
+        if with_pseudo_score:
+            return matching_bs, matching_as, matching_gjs, matching_gis, matching_targets, matching_anchs, matching_tscores
         return matching_bs, matching_as, matching_gjs, matching_gis, matching_targets, matching_anchs
         #  matching_bs, matching_as, matching_gjs, matching_gis分别对应incides中的b,a,gj,gi，matching_targets是归一化完整的GT,形状 [n, 6]: [img_id, cls, x, y, w, h]，matching_anchs是对应的anchor尺寸，形状 [n, 2]: [w, h]
 
@@ -437,3 +457,49 @@ class ScaleAwareAssigner(nn.Module):
             anch.append(anchors_i[a])
 
         return indices, anch
+
+    def _find_3_positive_with_score(self, p, targets):
+        """与 YOLOAnchorAssigner.find_3_positive_with_score 等价，额外透传目标分数列.
+        targets: (N, 7) [batch_idx, cls, x, y, w, h, score]
+        """
+        na, nt = self.na, targets.shape[0]
+        indices, anch, tscores = [], [], []
+        gain = torch.ones(8, device=targets.device)
+        ai = torch.arange(na, device=targets.device).float().view(na, 1).repeat(1, nt)
+        targets_cat = torch.cat((targets.repeat(na, 1, 1), ai[:, :, None]), 2)  # (na, nt, 8): last=anchor_idx
+
+        g = 0.5
+        off = torch.tensor([[0, 0],
+                            [1, 0], [0, 1], [-1, 0], [0, -1]],
+                           device=targets.device).float() * g
+
+        for i in range(self.nl):
+            anchors_i = self.anchors[i]
+            gain[2:6] = torch.tensor(p[i].shape, device=targets.device)[[3, 2, 3, 2]]
+            t = targets_cat * gain
+            if nt:
+                r = t[:, :, 4:6] / anchors_i[:, None]
+                j = torch.max(r, 1. / r).max(2)[0] < self.anchor_t
+                t = t[j]
+                gxy = t[:, 2:4]
+                gxi = gain[[2, 3]] - gxy
+                jk = ((gxy % 1. < g) & (gxy > 1.)).T
+                lm = ((gxi % 1. < g) & (gxi > 1.)).T
+                mask = torch.stack((torch.ones_like(jk[0]), jk[0], jk[1], lm[0], lm[1]))
+                t = t.repeat((5, 1, 1))[mask]
+                offsets = (torch.zeros_like(gxy)[None] + off[:, None])[mask]
+            else:
+                t = targets_cat[0]
+                offsets = 0
+
+            b, c = t[:, :2].long().T
+            gxy = t[:, 2:4]
+            gwh = t[:, 4:6]
+            gij = (gxy - offsets).long()
+            gi, gj = gij.T
+            a = t[:, 7].long()  # anchor_idx now at column 7
+            indices.append((b, a, gj.clamp_(0, int(gain[3]) - 1), gi.clamp_(0, int(gain[2]) - 1)))
+            anch.append(anchors_i[a])
+            tscores.append(t[:, 6].float())  # score column
+
+        return indices, anch, tscores
