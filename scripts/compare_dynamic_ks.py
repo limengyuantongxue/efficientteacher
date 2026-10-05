@@ -100,8 +100,8 @@ def generate_excel(records, output):
     ws.cell(row=ro+1,column=5,value=round(avg_b,2))
 
     for j,(lbl,lo,hi) in enumerate([
-        ("Small <655", 0, 655),
-        ("Medium 655-9216", 655, 9216),
+        ("Small <655", 0, 407),
+        ("Medium 655-9216", 407, 9216),
         ("Large >9216", 9216, float("inf")),
     ]):
         bucket = [r for r in records if lo <= r["area"] < hi]
@@ -119,8 +119,8 @@ def generate_excel(records, output):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--debug_dir", type=str, default="D:\\runs_yolov5\\exp65\\dynamic_ks_debug")
-    ap.add_argument("--output", type=str, default="D:\\个人文件\\文献\\毕业论文参考\\output\\compare_dynamic_ks_exp65.xlsx")
+    ap.add_argument("--debug_dir", type=str, default="D:\\个人文件\\文献\\毕业论文参考\\code\\efficientteacher\\exp_ssod\\exp22\\dynamic_ks_debug")
+    ap.add_argument("--output", type=str, default="D:\\个人文件\\文献\\毕业论文参考\\output\\compare_labelassignment_ssod_exp22.xlsx")
     ap.add_argument("--max_per_bucket", type=int, default=300)
     ap.add_argument("--no_sample", action="store_true")
     args = ap.parse_args()

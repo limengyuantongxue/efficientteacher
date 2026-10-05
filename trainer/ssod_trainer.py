@@ -325,6 +325,28 @@ class SSODTrainer(Trainer):
             self.train_with_unlabeled(callbacks)
     
     def after_epoch(self, callbacks, val):
+        # DAPT：把当前 epoch 告知半监督损失，触发各组自适应阈值重算（每 epoch 一次）
+        if hasattr(self.compute_un_sup_loss, 'set_epoch'):
+            self.compute_un_sup_loss.set_epoch(self.epoch)
+        # DAPT：把各组阈值追加记录到 <save_dir>/dapt_thresholds.csv，便于统计分布
+        if (self.RANK in [-1, 0]) and hasattr(self.compute_un_sup_loss, 'dapt_stats'):
+            _st = self.compute_un_sup_loss.dapt_stats()
+            if _st:
+                try:
+                    import csv as _csv
+                    _f = self.save_dir / 'dapt_thresholds.csv'
+                    _new = not _f.exists()
+                    with open(_f, 'a', newline='', encoding='utf-8') as _fh:
+                        _w = _csv.writer(_fh)
+                        if _new:
+                            _w.writerow(['epoch', 'group', 'n', 'w', 'r_star', 'high', 'low', 'src'])
+                        for _d in _st:
+                            _w.writerow([self.epoch, str(_d['key']), _d.get('n'),
+                                         round(float(_d.get('w', 0.0)), 4),
+                                         _d.get('r'), round(float(_d['high']), 6),
+                                         round(float(_d['low']), 6), _d.get('src')])
+                except Exception as _e:
+                    LOGGER.warning(f'[DAPT] 写出阈值日志失败: {_e}')
         if self.cfg.SSOD.pseudo_label_type == 'LabelMatch' and self.epoch >= self.cfg.SSOD.dynamic_thres_epoch:
             self.pseudo_label_creator.update_epoch_cls_thr(self.epoch - self.start_epoch)
             self.compute_un_sup_loss.ignore_thres_high = self.pseudo_label_creator.cls_thr_high

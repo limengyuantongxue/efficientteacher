@@ -172,6 +172,9 @@ _C.Loss.top_k=13
 _C.Loss.assigner_type='TAL' #TAL/SimOTA/AnchorBased/ATSS
 _C.Loss.scale_threshold=409.0 # SaA 尺度区分阈值(像素面积)，约 0.001*img_size^2
 _C.Loss.scale_temperature=1.0 # SaA alpha sigmoid temperature
+_C.Loss.nwd_C=20.0 # NWD 归一化常数(像素)，≈数据集目标平均边长
+_C.Loss.sa_min_k=1 # SaA 每个 GT 最少正样本数
+_C.Loss.sa_max_k=5 # SaA 每个 GT 最多正样本数
 _C.Loss.embedding=64 #embedding长度
 
 
@@ -285,6 +288,18 @@ _C.SSOD.pseudo_label_with_obj=False #pseudo label assigner生成伪标签时的�
 _C.SSOD.pseudo_label_with_bbox=False #pseudo label assigner是否用uncertain label算bbox loss
 _C.SSOD.pseudo_label_with_cls=False #pseudo label assigner是否用uncertain label算cls loss
 _C.SSOD.epoch_adaptor=True #是否开启epoch_adaptor
+# ---------------- DAPT: 双重自适应伪标签阈值 ----------------
+_C.SSOD.dapt_mode='off'          # off | class(仅类别) | scale(仅尺度) | dual(类别x尺度,本文)
+_C.SSOD.dapt_estimator='bgmm'    # bgmm | percentile | quantile(分位数匹配,新方法)
+_C.SSOD.dapt_scale_threshold=0.001  # 面积占比阈值 theta_s（与 SaA 尺度阈值同口径，约 0.1% 图像面积）
+_C.SSOD.dapt_fit_min=20          # 允许拟合 BGMM 的最小样本数（低于此值直接用固定阈值）
+_C.SSOD.dapt_min_samples=200     # 完全信任 DAPT 所需样本数（达到前按样本数渐进混合）
+_C.SSOD.dapt_buffer_size=2000    # 每组缓冲区上限（滑动窗口）
+_C.SSOD.dapt_momentum=0.9        # 阈值跨 epoch 动量平滑 tau
+_C.SSOD.dapt_percentile=65       # percentile 估计器：high 取该分位，low 取 (100-该值) 分位
+_C.SSOD.dapt_alpha_t=0.6         # 融合公式 T = mu_low + alpha_t*(mu_high-mu_low) 的 alpha_t
+_C.SSOD.dapt_T_floor=0.15        # DAPT 融合阈值 T 的下界（须低于固定 high=0.3，否则只能单向变严）
+_C.SSOD.dapt_target_rate=0.65    # quantile 的目标保留率 rho（数值=固定；'auto'=每轮自测 r*，旧行为）
 _C.SSOD.teacher_ota_cost=False #是否使用teacher模型的输出来计算ota的cost
 _C.SSOD.iou_type='giou'
 _C.SSOD.cosine_ema=True #是否开启cosine ema方案

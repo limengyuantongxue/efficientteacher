@@ -40,33 +40,29 @@ def compute_w_squared(box1: torch.Tensor, box2: torch.Tensor) -> torch.Tensor:
     cx1, cy1, w1, h1 = box1[:, 0], box1[:, 1], box1[:, 2], box1[:, 3]
     cx2, cy2, w2, h2 = box2[:, 0], box2[:, 1], box2[:, 2], box2[:, 3]
 
-    # 中心点距离 (N, M) 或 (N,)
-    if box1.shape[0] != box2.shape[0]:
-        # 广播计算
-        center_dist = (cx1.unsqueeze(1) - cx2.unsqueeze(0)) ** 2 + \
-                      (cy1.unsqueeze(1) - cy2.unsqueeze(0)) ** 2
-    else:
-        center_dist = (cx1 - cx2) ** 2 + (cy1 - cy2) ** 2
+    # 中心点距离：始终广播成 (N, M) 全矩阵
+    # 注：原实现在 N == M 时退化为"逐元素"(N,) 计算，会让 NWD 矩阵形状错误
+    #     并被下游静默广播成错误值。此处统一为全矩阵，与 docstring 一致。
+    center_dist = (cx1.unsqueeze(1) - cx2.unsqueeze(0)) ** 2 + \
+                  (cy1.unsqueeze(1) - cy2.unsqueeze(0)) ** 2
 
-    # 尺寸差异
-    size_diff = ((w1.unsqueeze(1) if box1.shape[0] != box2.shape[0] else w1) -
-                 (w2.unsqueeze(0) if box1.shape[0] != box2.shape[0] else w2)) ** 2 / 4 + \
-                ((h1.unsqueeze(1) if box1.shape[0] != box2.shape[0] else h1) -
-                 (h2.unsqueeze(0) if box1.shape[0] != box2.shape[0] else h2)) ** 2 / 4
-
-    if box1.shape[0] != box2.shape[0]:
-        size_diff = ((w1.unsqueeze(1) - w2.unsqueeze(0)) ** 2 +
-                     (h1.unsqueeze(1) - h2.unsqueeze(0)) ** 2) / 4
+    # 尺寸差异：(w1-w2)^2/4 + (h1-h2)^2/4，同样广播成 (N, M)
+    size_diff = ((w1.unsqueeze(1) - w2.unsqueeze(0)) ** 2 +
+                 (h1.unsqueeze(1) - h2.unsqueeze(0)) ** 2) / 4
 
     return center_dist + size_diff
 
 
 def compute_nwd_similarity(boxes1: torch.Tensor, boxes2: torch.Tensor,
-                           C: float = 1.0) -> torch.Tensor:
+                           C: float = 20.0) -> torch.Tensor:
     """
-    计算 NWD 相似度矩阵
+    计算 NWD 相似度矩阵（对齐 NWD 论文 Xu et al., ISPRS 2022）
 
-    NWD(box1, box2) = exp(-W² / C)
+    NWD(box1, box2) = exp( -sqrt(W²) / C )
+
+    注：C 为归一化常数，论文中取"数据集中目标的平均绝对尺寸"。
+        C 固定（不按每个 GT 尺寸归一化），NWD 因此只取决于"绝对偏移"：
+        相同绝对偏移下，小目标与大目标得到相同相似度 —— 这正是 NWD 对小目标友好的来源。
 
     Args:
         boxes1: (N, 4) 张量，格式为 (cx, cy, w, h)
@@ -78,8 +74,8 @@ def compute_nwd_similarity(boxes1: torch.Tensor, boxes2: torch.Tensor,
                当两个框完全相同时，相似度为 1
     """
     w_squared = compute_w_squared(boxes1, boxes2)
-    # 使用 1 - exp(-W²/C) 作为相似度，这样相同框的相似度为 1
-    nwd = torch.exp(-w_squared / C)
+    # 论文形式：对 W² 开方后线性衰减；1e-8 防止完全重合时 sqrt(0) 的数值问题
+    nwd = torch.exp(-torch.sqrt(w_squared + 1e-8) / C)
     return nwd
 
 
@@ -119,7 +115,10 @@ class ScaleAwareAssigner(nn.Module):
                  iou_weight=3.0,
                  cls_weight=1.0,
                  scale_threshold=1024.0,
-                 scale_temperature=1.0):
+                 scale_temperature=1.0,
+                 nwd_C=20.0,
+                 min_k=1,
+                 max_k=5):
         super().__init__()
         self.nc = nc
         self.na = na
@@ -132,6 +131,9 @@ class ScaleAwareAssigner(nn.Module):
         self.cls_weight = cls_weight
         self.scale_threshold = scale_threshold
         self.scale_temperature = scale_temperature
+        self.nwd_C = float(nwd_C)                 # NWD 归一化常数(像素)，≈数据集目标平均边长
+        self.min_k = max(1, int(min_k))           # 每个 GT 最少正样本数
+        self.max_k = max(self.min_k, int(max_k))  # 每个 GT 最多正样本数
         self._debug_data = []
         self._collect_debug = False
         self.iou_t = 0.50
@@ -151,6 +153,8 @@ class ScaleAwareAssigner(nn.Module):
 
     @torch.no_grad()
     def forward(self, p, targets, img_size=640, with_pseudo_score=False):
+        # 附加列(payload)数量：targets 除前 6 列 [batch,cls,x,y,w,h] 之外的全部列
+        n_payload = max(0, targets.shape[1] - 6) if with_pseudo_score else 0
         """
         Args:
             p: list of layer predictions [(B, na, ny, nx, no), ...]
@@ -246,7 +250,7 @@ class ScaleAwareAssigner(nn.Module):
             # txywh 已经是 (cx, cy, w, h) 格式
             # pxyxys 是 (x1,y1,x2,y2) 格式，需要转成 (cx,cy,w,h)
             pxywh_for_nwd = xyxy2xywh(pxyxys)
-            nwd = compute_nwd_similarity(txywh, pxywh_for_nwd, C=50.0)
+            nwd = compute_nwd_similarity(txywh, pxywh_for_nwd, C=self.nwd_C)
 
             # 混合相似度 = α·IoU + (1-α)·NWD
             mixed_sim = alpha.unsqueeze(1) * pair_wise_iou + (1 - alpha.unsqueeze(1)) * nwd
@@ -255,10 +259,10 @@ class ScaleAwareAssigner(nn.Module):
             # 动态 K — 与 OTA 一致
             top_k = min(self.top_k, pair_wise_mixed_loss.shape[1])
             topk_mixedsim, _ = torch.topk(mixed_sim, top_k, dim=1)
-            dynamic_ks = torch.clamp(topk_mixedsim.sum(1).int(), min=1)
+            dynamic_ks = torch.clamp(topk_mixedsim.sum(1).int(), min=self.min_k, max=self.max_k)
 
             topk_iou, _ = torch.topk(pair_wise_iou, top_k, dim=1)
-            dynamic_ks_iou = torch.clamp(topk_iou.sum(1).int(), min=1)
+            dynamic_ks_iou = torch.clamp(topk_iou.sum(1).int(), min=self.min_k, max=self.max_k)
 
             if self._collect_debug:
                 gt_areas_cpu = gt_areas.detach().cpu()
@@ -367,7 +371,7 @@ class ScaleAwareAssigner(nn.Module):
                 matching_targets[i] = torch.tensor([], device=device, dtype=torch.int64)
                 matching_anchs[i] = torch.tensor([], device=device, dtype=torch.int64)
                 if with_pseudo_score:
-                    matching_tscores[i] = torch.tensor([], device=device, dtype=torch.float32)
+                    matching_tscores[i] = torch.zeros((0, n_payload), device=device, dtype=torch.float32)
 
         if with_pseudo_score:
             return matching_bs, matching_as, matching_gjs, matching_gis, matching_targets, matching_anchs, matching_tscores
@@ -459,14 +463,18 @@ class ScaleAwareAssigner(nn.Module):
         return indices, anch
 
     def _find_3_positive_with_score(self, p, targets):
-        """与 YOLOAnchorAssigner.find_3_positive_with_score 等价，额外透传目标分数列.
-        targets: (N, 7) [batch_idx, cls, x, y, w, h, score]
+        """与 YOLOAnchorAssigner.find_3_positive_with_score 等价，额外透传附加列(payload).
+
+        targets: (N, 6+K) = [batch_idx, cls, x, y, w, h, payload_0, ..., payload_{K-1}]
+                 例如 K=1 时 payload 是 obj_conf；K=2 时是 (obj_conf, cls_conf)。
+        返回 (indices, anch, payloads)，payloads 为每层的 (M, K) 张量。
         """
         na, nt = self.na, targets.shape[0]
-        indices, anch, tscores = [], [], []
-        gain = torch.ones(8, device=targets.device)
+        n_payload = max(0, targets.shape[1] - 6)
+        indices, anch, payloads = [], [], []
+        gain = torch.ones(6 + n_payload + 1, device=targets.device)
         ai = torch.arange(na, device=targets.device).float().view(na, 1).repeat(1, nt)
-        targets_cat = torch.cat((targets.repeat(na, 1, 1), ai[:, :, None]), 2)  # (na, nt, 8): last=anchor_idx
+        targets_cat = torch.cat((targets.repeat(na, 1, 1), ai[:, :, None]), 2)  # 最后一列=anchor_idx
 
         g = 0.5
         off = torch.tensor([[0, 0],
@@ -497,9 +505,12 @@ class ScaleAwareAssigner(nn.Module):
             gwh = t[:, 4:6]
             gij = (gxy - offsets).long()
             gi, gj = gij.T
-            a = t[:, 7].long()  # anchor_idx now at column 7
+            a = t[:, -1].long()  # anchor_idx 在最后一列
             indices.append((b, a, gj.clamp_(0, int(gain[3]) - 1), gi.clamp_(0, int(gain[2]) - 1)))
             anch.append(anchors_i[a])
-            tscores.append(t[:, 6].float())  # score column
+            if n_payload > 0:
+                payloads.append(t[:, 6:6 + n_payload].float())
+            else:
+                payloads.append(torch.zeros((t.shape[0], 0), device=t.device))
 
-        return indices, anch, tscores
+        return indices, anch, payloads

@@ -16,6 +16,12 @@ import numpy as np
 # from loss.yolox_loss import pairwise_bbox_iou
 from utils.general import xywh2xyxy, box_iou
 from assigner import YOLOAnchorAssigner, ScaleAwareAssigner
+try:                      # 作为 loss.ssod 包的子模块导入
+    from .dapt import DAPTThresholdManager
+except (ImportError, ValueError):   # 直接按文件路径加载时
+    import os as _os, sys as _sys
+    _sys.path.append(_os.path.dirname(_os.path.abspath(__file__)))
+    from dapt import DAPTThresholdManager
 # from torch.cuda.amp import autocast
 
 def smooth_BCE(eps=0.1):  # https://github.com/ultralytics/yolov3/issues/238#issuecomment-598028441
@@ -81,9 +87,32 @@ class ComputeStudentMatchLoss():
                 stride=det.stride, top_k=self.sa_top_k,
                 scale_threshold=self.sa_scale_threshold,
                 scale_temperature=self.sa_scale_temperature,
+                nwd_C=float(getattr(cfg.Loss, 'nwd_C', 20.0)),
+                min_k=int(getattr(cfg.Loss, 'sa_min_k', 1)),
+                max_k=int(getattr(cfg.Loss, 'sa_max_k', 5)),
             )
         else:
             self.sa_assigner = None
+
+        # ---------- DAPT：双重自适应伪标签阈值 ----------
+        self.dapt_mode = str(getattr(cfg.SSOD, 'dapt_mode', 'off')).lower()
+        self._dapt_epoch = -1
+        if self.dapt_mode != 'off':
+            self.dapt = DAPTThresholdManager(
+                mode=self.dapt_mode,
+                estimator=str(getattr(cfg.SSOD, 'dapt_estimator', 'bgmm')).lower(),
+                scale_threshold=float(getattr(cfg.SSOD, 'dapt_scale_threshold', 0.001)),
+                fit_min=int(getattr(cfg.SSOD, 'dapt_fit_min', 20)),
+                min_samples=int(getattr(cfg.SSOD, 'dapt_min_samples', 200)),
+                max_buffer_size=int(getattr(cfg.SSOD, 'dapt_buffer_size', 2000)),
+                momentum=float(getattr(cfg.SSOD, 'dapt_momentum', 0.9)),
+                percentile=float(getattr(cfg.SSOD, 'dapt_percentile', 65)),
+                alpha_t=float(getattr(cfg.SSOD, 'dapt_alpha_t', 0.6)),
+                T_floor=float(getattr(cfg.SSOD, 'dapt_T_floor', 0.15)),
+                target_rate=getattr(cfg.SSOD, 'dapt_target_rate', 0.65),
+            )
+        else:
+            self.dapt = None
     
     # def build_single_targets(self, p, targets):
     #     # Build targets for compute_loss(), input targets(image,class,x,y,w,h)
@@ -141,6 +170,17 @@ class ComputeStudentMatchLoss():
 
     #     return tcls, tbox, indices, anch 
 
+    def set_epoch(self, epoch):
+        """由 trainer 在每个 epoch 结束时调用；DAPT 在此重算各组阈值。"""
+        if self.dapt is None:
+            return
+        if int(epoch) != self._dapt_epoch:
+            self._dapt_epoch = int(epoch)
+            self.dapt.on_epoch_end(self.ignore_thres_high, self.ignore_thres_low)
+
+    def dapt_stats(self):
+        return None if self.dapt is None else self.dapt.last_epoch_stats
+
     def select_targets(self, targets):
         '''
         targets: [batch, cls, x, y, x, y, conf, obj_conf, cls_conf]
@@ -153,9 +193,18 @@ class ComputeStudentMatchLoss():
         for t in targets:
             #伪标签得分大于相应类别的阈值,标记为正样本
             t = np.array(t.cpu())
-            # original logic
-            if t[6] >= self.ignore_thres_high[int(t[1])]:
-                    reliable_targets.append(t[:7])
+            ci = int(t[1])
+            area_ratio = float(t[4]) * float(t[5])
+            # ---- DAPT：累积分数并取该组自适应阈值（关闭时即固定阈值）----
+            if self.dapt is not None:
+                self.dapt.update(ci, float(t[6]), area_ratio)
+                th_high, th_low = self.dapt.get_thresholds(
+                    ci, area_ratio, self.ignore_thres_high[ci], self.ignore_thres_low[ci])
+            else:
+                th_high, th_low = self.ignore_thres_high[ci], self.ignore_thres_low[ci]
+            #伪标签得分大于相应类别的阈值,标记为正样本
+            if t[6] >= th_high:
+                reliable_targets.append(t[:7])
             # if t[6] >= self.ignore_thres_high[int(t[1])]:
             #     # if t[7] >= self.ignore_thres_high[int(t[1])] and t[8] >= self.ignore_thres_high[int(t[1])]:
             #     if t[8] >= 0.99:
@@ -168,7 +217,7 @@ class ComputeStudentMatchLoss():
             #         else:
             #             uncertain_targets.append(t[:7])
             #伪标签低阈值和高阈值之间的，标记为不确定样本
-            elif t[6] >= self.ignore_thres_low[int(t[1])]:
+            elif t[6] >= th_low:
                 if self.pseudo_label_with_obj:
                     uncertain_targets.append(np.concatenate((t[:6], t[7:8])))
                     #不确定样本里面obj特别高的，送出来修iou loss
@@ -301,33 +350,74 @@ class ComputeStudentMatchLoss():
         loss_dict = dict(ss_box = lbox, ss_obj = lobj, ss_cls = lcls)
         return loss * bs, loss_dict
 
-    def sa_default_loss(self, p, targets):
-        """Semi-supervised loss using the scale-aware (SaA) assigner.
+    def select_targets_saa(self, targets):
+        """SaA 路径专用：把伪标签拆成 certain / uncertain_all。
 
-        Mirrors default_loss but consumes the OTA-style 6/7-tuple returned by
-        ScaleAwareAssigner: (bs, as_, gjs, gis, targets, anchors[, tscores]).
+        uncertain_all 同时保留 (obj_conf, cls_conf) 两列，供"一次分配后按需拆子集"，
+        从而把原先 4 次标签分配压缩为 2 次（1 次 certain + 1 次 uncertain）。
+
+        输入 targets: (N, 9) = [batch, cls, x, y, w, h, conf, obj_conf, cls_conf]
+        返回:
+            certain:       (n, 7) [batch, cls, x, y, w, h, conf]
+            uncertain_all: (m, 8) [batch, cls, x, y, w, h, obj_score, cls_conf]
+                           其中 obj_score = obj_conf（pseudo_label_with_obj=True 时）
+                                          或 conf（否则），与原实现语义一致
+        """
+        device = targets.device
+        certain, unc = [], []
+        for t in targets:
+            t = np.array(t.cpu())
+            ci = int(t[1])
+            area_ratio = float(t[4]) * float(t[5])
+            # ---- DAPT：累积分数并取该组自适应阈值（关闭时即固定阈值）----
+            if self.dapt is not None:
+                self.dapt.update(ci, float(t[6]), area_ratio)
+                th_high, th_low = self.dapt.get_thresholds(
+                    ci, area_ratio, self.ignore_thres_high[ci], self.ignore_thres_low[ci])
+            else:
+                th_high, th_low = self.ignore_thres_high[ci], self.ignore_thres_low[ci]
+            if t[6] >= th_high:
+                certain.append(t[:7])
+            elif t[6] >= th_low:
+                obj_score = t[7] if self.pseudo_label_with_obj else t[6]
+                unc.append(np.concatenate((t[:6], np.array([obj_score, t[8]], dtype=np.float32))))
+        certain_t = (torch.from_numpy(np.array(certain).astype(np.float32)).contiguous().to(device)
+                     if certain else torch.zeros((0, 7), device=device))
+        unc_t = (torch.from_numpy(np.array(unc).astype(np.float32)).contiguous().to(device)
+                 if unc else torch.zeros((0, 8), device=device))
+        return certain_t, unc_t
+
+    def sa_default_loss(self, p, targets):
+        """半监督损失（SaA 版）：只用 **2 次** 标签分配。
+
+        相比初版实现（per-step 4 次分配：certain / uc / uc_obj / uc_cls）大幅降低显存与耗时：
+          - 分配 1：certain   -> box/obj/cls 监督
+          - 分配 2：uncertain -> 一次匹配拿到全部不确定目标（携带 obj_score、cls_conf 两列），
+                                再按分数列拆出 obj / bbox / cls 三路子集
         """
         device = targets.device
         lcls, lbox, lobj = torch.zeros(1, device=device), torch.zeros(1, device=device), torch.zeros(1, device=device)
         pre_gen_gains = [torch.tensor(pp.shape, device=device)[[3, 2, 3, 2]] for pp in p]
+        has_pseudo = targets.shape[1] > 6
 
-        if targets.shape[1] > 6:
-            certain_targets, uc_targets, uc_obj_targets, uc_cls_targets = self.select_targets(targets)
-            # certain (labeled) branch —— 6 列，不携带伪标签分数
-            bs, as_, gjs, gis, sa_tgts, anch = self.sa_assigner(p, certain_targets[:, :6], img_size=self.img_size)
-            # uncertain (pseudo-label) branches —— 携带分数
-            uc_bs, uc_as_, uc_gjs, uc_gis, uc_tgts, uc_anch, uc_ts = self.sa_assigner(
-                p, uc_targets, img_size=self.img_size, with_pseudo_score=True)
-            obs, oas, ogjs, ogis, otgts, oanch, ots = self.sa_assigner(
-                p, uc_obj_targets, img_size=self.img_size, with_pseudo_score=True)
-            cbs, cas, cgjs, cgis, ctgts, canch, cts = self.sa_assigner(
-                p, uc_cls_targets, img_size=self.img_size, with_pseudo_score=True)
+        if has_pseudo:
+            certain, uc_all = self.select_targets_saa(targets)
+            # ---- 分配 1/2：certain ----
+            bs, as_, gjs, gis, sa_tgts, anch = self.sa_assigner(
+                p, certain[:, :6], img_size=self.img_size)
+            # ---- 分配 2/2：uncertain（一次拿到全部）----
+            ubs, uas, ugjs, ugis, utgts, uanch, upay = self.sa_assigner(
+                p, uc_all, img_size=self.img_size, with_pseudo_score=True)
         else:
-            bs, as_, gjs, gis, sa_tgts, anch = self.sa_assigner(p, targets, img_size=self.img_size)
+            bs, as_, gjs, gis, sa_tgts, anch = self.sa_assigner(
+                p, targets, img_size=self.img_size)
+            ubs = uas = ugjs = ugis = utgts = uanch = upay = None
 
         for i, pi in enumerate(p):
-            b, a, gj, gi = bs[i], as_[i], gjs[i], gis[i]
             tobj = torch.zeros_like(pi[..., 0], device=device)
+
+            # ---------------- certain 分支 ----------------
+            b, a, gj, gi = bs[i], as_[i], gjs[i], gis[i]
             n = b.shape[0]
             if n:
                 ps = pi[b, a, gj, gi]
@@ -346,40 +436,43 @@ class ComputeStudentMatchLoss():
                     t[range(n), selected_tcls] = self.cp
                     lcls += self.BCEcls(ps[:, 5:], t)
 
-            if targets.shape[1] > 6:
-                # uncertain label cal obj loss
-                ucb, uca, ucgj, ucgi = uc_bs[i], uc_as_[i], uc_gjs[i], uc_gis[i]
-                n = ucb.shape[0]
+            # ---------------- uncertain 分支（同一份匹配结果拆子集）----------------
+            if has_pseudo:
+                ub, ua, ugj, ugi = ubs[i], uas[i], ugjs[i], ugis[i]
+                n = ub.shape[0]
                 if n:
+                    pay = upay[i]        # (n, 2) = (obj_score, cls_conf)
+                    ut = utgts[i]        # (n, 8)
+                    ups = pi[ub, ua, ugj, ugi]
+                    # obj：全部 uncertain，用 obj_score 作软标签
                     if self.ignore_obj:
-                        tobj[ucb, uca, ucgj, ucgi] = -1
+                        tobj[ub, ua, ugj, ugi] = -1
                     else:
-                        tobj[ucb, uca, ucgj, ucgi] = uc_ts[i].type(tobj.dtype)
+                        tobj[ub, ua, ugj, ugi] = pay[:, 0].type(tobj.dtype)
 
-                if self.pseudo_label_with_bbox:
-                    ob, oa, ogj, ogi = obs[i], oas[i], ogjs[i], ogis[i]
-                    n = ob.shape[0]
-                    if n:
-                        uc_ps = pi[ob, oa, ogj, ogi]
-                        grid_o = torch.stack([ogi, ogj], dim=1).float()
-                        pxy = uc_ps[:, :2].sigmoid() * 2. - 0.5
-                        pwh = (uc_ps[:, 2:4].sigmoid() * 2) ** 2 * oanch[i]
+                    if self.pseudo_label_with_bbox or self.pseudo_label_with_cls:
+                        grid_u = torch.stack([ugi, ugj], dim=1).float()
+                        ubox = ut[:, 2:6] * pre_gen_gains[i]
+                        ubox[:, :2] -= grid_u
+                        pxy = ups[:, :2].sigmoid() * 2. - 0.5
+                        pwh = (ups[:, 2:4].sigmoid() * 2) ** 2 * uanch[i]
                         pbox = torch.cat((pxy, pwh), 1)
-                        obox = otgts[i][:, 2:6] * pre_gen_gains[i]
-                        obox[:, :2] -= grid_o
-                        iou = bbox_iou(pbox.T, obox, x1y1x2y2=False, CIoU=True)
-                        lbox += (1.0 - iou).mean()
 
-                if self.pseudo_label_with_cls:
-                    cb, ca, cgj, cgi = cbs[i], cas[i], cgjs[i], cgis[i]
-                    n = cb.shape[0]
-                    if n:
-                        uc_ps = pi[cb, ca, cgj, cgi]
-                        tcls = ctgts[i][:, 1].long()
-                        if self.nc > 1:
-                            t = torch.full_like(uc_ps[:, 5:], self.cn, device=device)
-                            t[range(n), tcls] = self.cp
-                            lcls += self.BCEcls(uc_ps[:, 5:], t)
+                        # bbox：obj_score >= 0.99 的子集（原 uc_obj_targets 语义）
+                        if self.pseudo_label_with_bbox:
+                            m = pay[:, 0] >= 0.99
+                            if bool(m.any()):
+                                lbox += (1.0 - bbox_iou(pbox[m].T, ubox[m], x1y1x2y2=False, CIoU=True)).mean()
+
+                        # cls：cls_conf >= 0.99 的子集（原 uc_cls_targets 语义）
+                        if self.pseudo_label_with_cls and self.nc > 1:
+                            m = pay[:, 1] >= 0.99
+                            if bool(m.any()):
+                                ps_c = ups[m]
+                                tcl = ut[m, 1].long()
+                                t = torch.full_like(ps_c[:, 5:], self.cn, device=device)
+                                t[range(tcl.shape[0]), tcl] = self.cp
+                                lcls += self.BCEcls(ps_c[:, 5:], t)
 
             valid_mask = tobj >= 0
             obji = self.BCEobj(pi[..., 4][valid_mask], tobj[valid_mask])
