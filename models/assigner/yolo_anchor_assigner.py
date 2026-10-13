@@ -17,7 +17,7 @@ class YOLOAnchorAssigner(nn.Module):
                  num_keypoints=0,
                  single_targets=False,
                  ota=False,
-                 top_k=1):
+                 top_k=13):
         super(YOLOAnchorAssigner, self).__init__()
         self.nc = nc 
         self.na = na
@@ -500,6 +500,7 @@ class YOLOAnchorAssigner(nn.Module):
             fg_mask_inboxes = matching_matrix.sum(0) > 0.0
             matched_gt_inds = matching_matrix[:, fg_mask_inboxes].argmax(0)
         
+            from_which_layer = from_which_layer.to(fg_mask_inboxes.device)
             from_which_layer = from_which_layer[fg_mask_inboxes]
             all_b = all_b[fg_mask_inboxes]
             all_a = all_a[fg_mask_inboxes]

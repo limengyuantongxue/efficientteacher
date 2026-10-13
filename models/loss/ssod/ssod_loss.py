@@ -500,8 +500,8 @@ class ComputeStudentMatchLoss():
         lcls, lbox, lobj = torch.zeros(1, device=device), torch.zeros(1, device=device), torch.zeros(1, device=device)
         if targets.shape[1] > 6:
             reliable_targets, uc_targets, uc_obj_targets, uc_cls_targets = self.select_targets(targets)
-            bs, as_, gjs, gis, reliable_targets, anchors, tscores = self.assigner(p, reliable_targets, with_pseudo_scores=True)
-            uc_bs, uc_as_, uc_gjs, uc_gis, uc_targets, uc_anchors, uc_tscores = self.assigner(p, uc_targets, with_pseudo_scores=True)
+            bs, as_, gjs, gis, reliable_targets, anchors, tscores = self.assigner(p, reliable_targets, with_pseudo_score=True)
+            uc_bs, uc_as_, uc_gjs, uc_gis, uc_targets, uc_anchors, uc_tscores = self.assigner(p, uc_targets, with_pseudo_score=True)
             pre_gen_gains = [torch.tensor(pp.shape, device=device)[[3, 2, 3, 2]] for pp in p] 
     
             # Losses
