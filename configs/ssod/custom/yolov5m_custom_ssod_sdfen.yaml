@@ -1,0 +1,123 @@
+# EfficientTeacher by Alibaba Cloud 
+
+# Parameters
+project: 'exp_ssod/'
+adam: False
+epochs: 200
+
+prune_finetune: False
+linear_lr: True
+hyp:
+  lr0: 0.01
+  hsv_h: 0.015
+  hsv_s: 0.7
+  hsv_v: 0.4
+  lrf: 0.1
+  scale: 0.9
+  no_aug_epochs: 0
+  mixup: 0.1
+  mosaic: 1.0
+  warmup_epochs: 0
+  burn_epochs: 40
+
+Model:
+  depth_multiple: 0.67  # model depth multiple
+  width_multiple: 0.75  # layer channel multiple
+  Backbone: 
+    name: 'SmallDefect'
+    activation: 'SiLU'
+    widths: [64, 128, 256, 512]
+    boundary_ratio: 0.001          # b1 小/中 边界(面积占比)
+    boundary_ratio_large: 0.002    # b2 中/大 边界
+    small_channels: 192            # 三路输出通道(与 neck 的 in_channels x width_multiple 一致)
+    medium_channels: 384
+    large_channels: 768
+    ha_temperature: 1.0            # 软标签 sigmoid 温度(像素)
+  Neck: 
+    name: 'YoloV5' 
+    in_channels: [256, 512, 1024]
+    out_channels: [256, 512, 1024]
+    activation: 'SiLU'
+  Head: 
+    name: 'YoloV5'
+    activation: 'SiLU'
+  anchors: [[10,13, 16,30, 33,23],[30,61, 62,45, 59,119],[116,90, 156,198, 373,326]]  # P5/32]
+Loss:
+  type: 'ComputeLoss'
+  cls: 0.3
+  obj: 0.7
+  anchor_t: 4.0
+  ha_loss_weight: 0.1
+  # --- SaA: dual-scale aware label assignment ---
+  assigner_type: 'SaA'
+  # scale_threshold: 约 0.001*img_size^2 (像素面积)。对 1280 图约 1638.4；640 图为 409.6
+  scale_threshold: 409.0
+  scale_temperature: 1.0
+  # --- NWD 修正后的新参数 ---
+  # nwd_C: NWD 归一化常数(像素)，取数据集目标平均边长。全体中位 17.9px / 均值 21.5px
+  nwd_C: 20.0
+  # 每个 GT 的正样本数上下限（修好 NWD 后必须限幅，否则动态K会膨胀）
+  sa_min_k: 1
+  sa_max_k: 13
+
+Dataset:
+  data_name: 'coco'
+  train: D:/dataset/broken_pencil_cocotoyolo/ssod15/labeled.txt  # 4911 images
+  val: D:/dataset/broken_pencil_cocotoyolo/ssod15/val.txt  # 1230 images
+  test: D:/dataset/broken_pencil_cocotoyolo/ssod15/val.txt # 8607 images
+  target: D:/dataset/broken_pencil_cocotoyolo/ssod15/unlabel.txt
+  nc: 3  # number of classess
+  np: 0 #number of keypoints
+  names: [ 'body_broken', 'eraser_broken', 'NG']
+  img_size: 640
+  batch_size: 8
+
+SSOD:
+  # ---------------- DAPT: 双重自适应伪标签阈值 ----------------
+  dapt_mode: 'off'          # off | class | scale | dual(本文)
+  dapt_estimator: 'quantile' # bgmm | percentile | quantile(=分位数匹配,新方法c2)
+                             #   quantile: 先算全局基线保留率 r*，再让每组保留相同比例 r*
+                             #             -> 总量与固定阈值一致，只在组间重新分配
+  dapt_scale_threshold: 0.001   # 面积占比 theta_s（与 Loss.scale_threshold=409px^2 等价：409/640^2≈0.001）
+  dapt_fit_min: 20
+  dapt_min_samples: 200
+  dapt_target_rate: 0.65     # 分位数匹配的目标保留率 rho（固定值；每组恰好保留 rho 比例）
+  dapt_buffer_size: 10000    # 2000->10000：跨约5轮，降低分位数的采样噪声（不破坏"恰好保留rho"）
+  dapt_momentum: 0.0         # 分位数分支不加动量（动量滞后方向与教师进步方向相反，会长期多留低分伪标签）
+  dapt_percentile: 65
+  dapt_alpha_t: 0.6          # 融合公式 T = mu_low + alpha_t*(mu_high-mu_low)
+  dapt_T_floor: 0.15         # T 的下界（低于固定 high=0.3，DAPT 才能对小目标组放松）
+                             # 方案a：只自适应 high；low 固定为 ignore_thres_low=0.05 不变
+  train_domain: True
+  nms_conf_thres: 0.1
+  nms_iou_thres: 0.4
+  teacher_loss_weight: 1.0
+  cls_loss_weight: 0.3
+  box_loss_weight: 0.05
+  obj_loss_weight: 0.7
+  loss_type: 'ComputeStudentMatchLoss'
+  ignore_thres_low: 0.05
+  ignore_thres_high: 0.3
+  uncertain_aug: True
+  use_ota:  False
+  multi_label: False
+  ignore_obj: False
+  pseudo_label_with_obj: True
+  pseudo_label_with_bbox: True
+  pseudo_label_with_cls: False
+  with_da_loss: False
+  da_loss_weights: 0.01
+  epoch_adaptor: True
+  resample_high_percent: 0.25
+  resample_low_percent: 0.99
+  ema_rate: 0.996
+  cosine_ema: True
+  imitate_teacher: False
+  ssod_hyp:
+    with_gt: False
+    mosaic: 1.0
+    cutout: 0.5
+    autoaugment: 0.5
+    scale: 0.8
+    degrees: 0.0
+    shear: 0.0

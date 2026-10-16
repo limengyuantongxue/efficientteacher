@@ -41,7 +41,7 @@ Loss:
   obj: 0.7
   anchor_t: 4.0
   # --- SaA: dual-scale aware label assignment ---
-  assigner_type: 'SaA'
+  assigner_type: 'SimOTA'
   # scale_threshold: 约 0.001*img_size^2 (像素面积)。对 1280 图约 1638.4；640 图为 409.6
   scale_threshold: 409.0
   scale_temperature: 1.0

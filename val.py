@@ -175,6 +175,7 @@ def run(data,
         eval_num = -1,
         cfg = None,
         val_ssod = False,
+        area_bins = 'none',  # 面积分档 AP: 'none' | 'coco'(32^2/96^2) | 'scale'(0.001/0.002*img^2) | 'both'
         num_points = 0,
         val_kp = False,
         val_dp1000 = False,
@@ -266,6 +267,59 @@ def run(data,
     loss = torch.zeros(3, device=device)
     jdict, stats, ap, ap_class = [], [], [], []
 
+    # ==================== 面积分档 AP（AP_S / AP_M / AP_L / AR）====================
+    # 口径（COCO 式）：GT 与预测框【同时】按面积分档过滤后再做匹配。
+    #   'coco' : 每档边界 32^2 / 96^2 像素^2（COCO small/medium/large）
+    #   'scale': 每档边界 0.001*img^2 / 0.002*img^2（与 SaA 的 scale_threshold、SDFEN 的 b1/b2 同口径）
+    # 用途：为"面向小目标"提供直接证据（小目标档的 AP 才是本文关心的量）。
+    # 注意：'scale' 档必须用【归一化面积占比】(w*h / 原图面积)，与 SaA 的 scale_threshold=0.001*img^2、
+    #       SDFEN 的 b1=0.001/b2=0.002 完全同口径；若误用 native 像素面积，会因原图分辨率(1280)与
+    #       训练分辨率(640)不同而整体放大 (1280/640)^2=4 倍，导致分档错位。
+    area_sets = {}
+    _ab = str(area_bins).lower()
+    if _ab in ('coco', 'both'):
+        area_sets['COCO'] = ((0.0, 32 ** 2, 96 ** 2, float('inf')), 'px')
+    if _ab in ('scale', 'both'):
+        area_sets['scale'] = ((0.0, 0.001, 0.002, float('inf')), 'norm')
+    area_stats = {k: [[], [], []] for k in area_sets}      # 每档: [(correct, conf, pcls, tcls), ...]
+    area_gt_count = {k: [0, 0, 0] for k in area_sets}
+
+    def _accumulate_area(pred, predn, labelsn, shape=None):
+        """把当前图像的预测/标签按面积分档累计 TP/FP。
+
+        pred / predn : 同一预测集合（predn 为 native-space 坐标）；pred 可为空张量
+        labelsn      : native-space 标签 (n,5) = [cls, x1,y1,x2,y2]；None 表示该图无 GT
+        说明：某档内若无 GT，则该档的预测全部记为该档 FP；无预测时只登记 GT（保证 recall 分母完整）。
+        """
+        _imgarea = float(shape[0]) * float(shape[1]) if shape is not None else None
+        parea_px = None if len(pred) == 0 else \
+            (predn[:, 2] - predn[:, 0]).clamp(min=0) * (predn[:, 3] - predn[:, 1]).clamp(min=0)
+        tarea_px = None if (labelsn is None or len(labelsn) == 0) else \
+            (labelsn[:, 3] - labelsn[:, 1]).clamp(min=0) * (labelsn[:, 4] - labelsn[:, 2]).clamp(min=0)
+        # 归一化面积占比：native 像素面积 / 原图面积（等价于 SaA 用的 w_norm*h_norm）
+        parea_nm = (parea_px / _imgarea) if (parea_px is not None and _imgarea) else None
+        tarea_nm = (tarea_px / _imgarea) if (tarea_px is not None and _imgarea) else None
+        for _key, (_edges, _mode) in area_sets.items():
+            tarea = tarea_nm if _mode == 'norm' else tarea_px
+            parea = parea_nm if _mode == 'norm' else parea_px
+            for _bi in range(3):
+                gk = ((tarea >= _edges[_bi]) & (tarea < _edges[_bi + 1])) if tarea is not None else None
+                pk = ((parea >= _edges[_bi]) & (parea < _edges[_bi + 1])) if parea is not None else None
+                n_g = int(gk.sum()) if gk is not None else 0
+                n_p = int(pk.sum()) if pk is not None else 0
+                if n_g == 0 and n_p == 0:
+                    continue
+                area_gt_count[_key][_bi] += n_g
+                if n_g:
+                    c = process_batch(predn[pk], labelsn[gk], iouv).cpu()   # pk 可为空 -> (0, niou)
+                    tcl = labelsn[gk][:, 0].tolist()
+                else:                       # 该档无 GT：这些预测全算 FP
+                    c = torch.zeros(n_p, niou, dtype=torch.bool)
+                    tcl = []
+                area_stats[_key][_bi].append(
+                    (c.numpy(), pred[pk, 4].cpu().numpy(), pred[pk, 5].cpu().numpy(), tcl))
+    # =============================================================================
+
     ##model_postprocess
     # from models.head.yolov5_head import Detect
     # model_post = Detect(cfg)
@@ -347,6 +401,10 @@ def run(data,
             if len(pred) == 0:
                 if nl:
                     stats.append((torch.zeros(0, niou, dtype=torch.bool), torch.Tensor(), torch.Tensor(), tcls))
+                    if area_sets and num_points == 0:   # 无预测：各档只登记 GT，保证 recall 分母完整
+                        _tbox = xywh2xyxy(labels[:, 1:5])
+                        scale_coords(img[si].shape[1:], _tbox, shape, shapes[si][1])
+                        _accumulate_area(pred, pred, torch.cat((labels[:, 0:1], _tbox), 1), shape)
                 continue
 
             # Predictions
@@ -368,11 +426,15 @@ def run(data,
                     scale_coords(img[si].shape[1:], tbox, shape, shapes[si][1])  # native-space labels
                     labelsn = torch.cat((labels[:, 0:1], tbox), 1)  # native-space labels
                     correct = process_batch(predn, labelsn, iouv)
+                    if area_sets:
+                        _accumulate_area(pred, predn, labelsn, shape)
 
                     if plots:
                         confusion_matrix.process_batch(predn, labelsn)
             else:
                 correct = torch.zeros(pred.shape[0], niou, dtype=torch.bool)
+                if area_sets and len(pred):     # 无 GT 图：这些预测在各档内均算 FP
+                    _accumulate_area(pred, predn, None, shape)
             stats.append((correct.cpu(), pred[:, 4].cpu(), pred[:, 5].cpu(), tcls))  # (correct, conf, pcls, tcls)
 
             # Save/log
@@ -412,6 +474,40 @@ def run(data,
     if (verbose or (nc < 50 and not training)) and nc > 1 and len(stats):
         for i, c in enumerate(ap_class):
             print(pf % (names[c], seen, nt[c], p[i], r[i], ap50[i], ap[i]))
+
+    # Print area-bin AP（AP_S / AP_M / AP_L）：面向小目标的直接证据
+    # 注意：为避免被 scripts/run_val_multiple_times.py 的逐行解析误判为"类别行"，
+    #       每档只打印 6 个字段（< 7 时该脚本会跳过该行）。
+    if area_sets:
+        print('\n' + colorstr('bold', 'Area-AP:') +
+                    ' 面积分档 AP（GT 与预测框同时按面积过滤，COCO 口径）  imgsz=%d' % imgsz)
+        print('  %-10s %8s %9s %9s %9s %9s %9s' %
+                    ('bin', '#GT', 'P', 'R', 'mAP@.5', 'mAP@.5:.95', 'AR@.5:.95'))
+        for _key, (_edges, _mode) in area_sets.items():
+            for _bi, _bn in enumerate('SML'):
+                _ent = area_stats[_key][_bi]
+                if not _ent:
+                    continue
+                _sarr = [np.concatenate(x, 0) for x in zip(*_ent)]
+                if not (len(_sarr) and _sarr[0].any()):
+                    print('  %-10s %8d %9s %9s %9s %9s %9s' %
+                                ('%s-%s' % (_key, _bn), area_gt_count[_key][_bi], '-', '-', '0', '0', '0'))
+                    continue
+                _pb, _rb, _apb, _f1b, _apcb, _ = ap_per_class(*_sarr, plot=False, save_dir=save_dir, names=names)
+                _ap50b, _apb_all = _apb[:, 0], _apb.mean(1)
+                # AR = 各 IoU 阈值下"不加置信度过滤"的最大召回率的均值（召回上界）
+                _ar = float(_sarr[0].sum(0).mean() / max(len(_sarr[3]), 1))
+                print('  %-10s %8d %9.4f %9.4f %9.4f %9.4f %9.4f' %
+                            ('%s-%s' % (_key, _bn), area_gt_count[_key][_bi],
+                             _pb.mean(), _rb.mean(), _ap50b.mean(), _apb_all.mean(), _ar))
+            if _mode == 'norm':
+                print('  %s 档边界(归一化面积占比 w*h): %s' %
+                      (_key, ' < '.join(['%.4f' % _edges[0]] +
+                                        ['%.4f' % e for e in _edges[1:-1]] + ['inf'])))
+            else:
+                print('  %s 档边界(native px^2): %s' %
+                      (_key, ' < '.join(['%.0f' % _edges[0]] +
+                                        ['%.0f' % e for e in _edges[1:-1]] + ['inf'])))
 
     # Print speeds
     t = tuple(x / seen * 1E3 for x in dt)  # speeds per image
@@ -468,7 +564,7 @@ def run(data,
 def parse_opt():
     parser = argparse.ArgumentParser()
     parser.add_argument('--data', type=str, default=ROOT/'pencil_coco.yaml', help='dataset.yaml path')
-    parser.add_argument('--weights', nargs='+', type=str, default="D:\\runs_yolov5\\exp66\\weights\\best.pt", help='model.pt path(s)')
+    parser.add_argument('--weights', nargs='+', type=str, default="D:/个人文件/文献/毕业论文参考/code/efficientteacher/exp_ssod/exp25/weights/best.pt", help='model.pt path(s)')
     parser.add_argument('--batch-size', type=int, default=48, help='batch size')
     parser.add_argument('--imgsz', '--img', '--img-size', type=int, default=640, help='inference size (pixels)')
     parser.add_argument('--conf-thres', type=float, default=0.001, help='confidence threshold')
@@ -487,8 +583,10 @@ def parse_opt():
     parser.add_argument('--exist-ok', action='store_true', help='existing project/name ok, do not increment')
     parser.add_argument('--half', action='store_true', help='use FP16 half-precision inference')
     parser.add_argument('--val-ssod',  action='store_true', help='trigger when val semi-supervised') 
+    parser.add_argument('--area-bins', type=str, default='both',
+                        help="area-bin AP: 'none' | 'coco'(32^2/96^2 px^2) | 'scale'(0.001/0.002*img^2) | 'both'")
     parser.add_argument('--num-points',  type=int, default=0, help='num of keypoints') 
-    parser.add_argument('--cfg', type=str, default=r'D:\个人文件\文献\毕业论文参考\code\efficientteacher\configs\sup\custom\yolov5m_custom.yaml', help='The config file used for validation') 
+    parser.add_argument('--cfg', type=str, default=r'D:\个人文件\文献\毕业论文参考\code\efficientteacher\configs\ssod\custom\yolov5m_custom_ssod_saa.yaml', help='The config file used for validation') 
     parser.add_argument('--val-dp1000',  action='store_true', help='trigger when val dp1000 model') 
     opt = parser.parse_args()
     if opt.cfg == '':

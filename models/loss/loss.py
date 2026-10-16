@@ -132,6 +132,11 @@ class ComputeLoss:
         self.ota = cfg.Loss.assigner_type == 'SimOTA'
         self.sa = cfg.Loss.assigner_type == 'SaA'
         self.img_size = int(getattr(cfg.Dataset, 'img_size', 640))
+        # ---- SDFEN 层次激活(HA)损失 ----
+        self.model = model
+        self.ha_w = float(getattr(cfg.Loss, 'ha_loss_weight', 0.0))
+        self.ha_img_size = int(getattr(cfg.Dataset, 'img_size', 640))
+
         self.top_k = cfg.Loss.top_k
         self.assigner = YOLOAnchorAssigner(self.na, self.nl, self.anchors, self.anchor_t, det.stride, \
             self.nc, self.num_keypoints, single_targets=self.single_targets, ota=False)
@@ -375,13 +380,56 @@ class ComputeLoss:
         # loss_dict = dict(box = lbox, obj = lobj, cls = lcls)
         return loss * bs, loss_dict
 
+    # ---------------- SDFEN 层次激活(HA)损失 ----------------
+    @staticmethod
+    def _targets_to_xyxy(targets, batch_size, device):
+        """(N,6)[img,cls,x,y,w,h] 归一化 xywh  ->  (B, Nmax, 4) 归一化 xyxy，无效行填 -1。"""
+        if batch_size <= 0 or targets is None or targets.numel() == 0:
+            return torch.full((max(batch_size, 1), 1, 4), -1.0, device=device)
+        t = targets.detach()
+        bi = t[:, 0].long()
+        cx, cy, w, h = t[:, 2], t[:, 3], t[:, 4], t[:, 5]
+        xyxy = torch.stack([cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2], dim=1)
+        groups = [(bi == b).nonzero(as_tuple=True)[0] for b in range(batch_size)]
+        nmax = max([1] + [g.numel() for g in groups])
+        out = torch.full((batch_size, nmax, 4), -1.0, device=device)
+        for b, idx in enumerate(groups):
+            if idx.numel():
+                out[b, :idx.numel()] = xyxy[idx]
+        return out
+
+    def _ha_loss(self, p, targets):
+        """返回 HA 损失；非 SDFEN backbone / 无 GT 时返回 None（守卫，保证切回 YoloV5 不报错）。"""
+        if self.ha_w <= 0:
+            return None
+        bb = self.model.module.backbone if is_parallel(self.model) else self.model.backbone
+        maps = getattr(bb, '_ha_maps', None)
+        if maps is None or len(maps) == 0:
+            return None
+        if targets is None or targets.numel() == 0:
+            return None
+        n_lab = p[0].shape[0]                      # 有标部分的 batch（SSOD 下 teacher/student 拼接批次的前段）
+        maps = [m[:n_lab] for m in maps]
+        gt = self._targets_to_xyxy(targets, n_lab, targets.device)
+        return bb.compute_ha_loss(maps, gt, self.ha_img_size)
+
     def __call__(self, p, targets):  # predictions, targets, model
         if self.ota:
-            return self.ota_loss(p, targets)
+            loss, loss_dict = self.ota_loss(p, targets)
         elif self.sa:
-            return self.sa_loss(p, targets)
+            loss, loss_dict = self.sa_loss(p, targets)
         else:
-            return self.default_loss(p, targets)
+            loss, loss_dict = self.default_loss(p, targets)
+
+        # ---- SDFEN 层次激活损失：守卫式接入（非 SDFEN 或权重为 0 时自动跳过）----
+        ha = self._ha_loss(p, targets)
+        if ha is not None:
+            bs = p[0].shape[0]
+            loss = loss + self.ha_w * ha * bs          # 与其它项一致的 batch 缩放
+            loss_dict['ha'] = ha.detach()
+        else:
+            loss_dict['ha'] = torch.zeros((), device=targets.device)
+        return loss, loss_dict
 
 
 class DomainFocalLoss(nn.Module):

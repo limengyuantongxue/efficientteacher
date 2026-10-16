@@ -4,6 +4,7 @@ from .yolov6_backbone import YoloV6BackBone
 from .yolov7_backbone import YoloV7BackBone
 from .yolov8_backbone import YoloV8BackBone
 from .resnet import resnet50
+from .small_defect_backbone import SmallDefectBackbone
 
 def build_backbone(cfg):
     backbone_cfg = copy.deepcopy(cfg)
@@ -19,5 +20,7 @@ def build_backbone(cfg):
         return YoloV8BackBone(backbone_cfg)
     elif name == "ResNet50":
         return resnet50(backbone_cfg)
+    elif name == "SmallDefect":
+        return SmallDefectBackbone(backbone_cfg)
     else:
         raise NotImplementedError

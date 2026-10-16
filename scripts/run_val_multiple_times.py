@@ -38,11 +38,11 @@ sys.path.insert(0, ROOT)
 
 # 5 次训练得到的权重文件路径（请替换为你的实际路径）
 WEIGHTS_LIST = [
-    "D:\\runs_yolov5\\exp60\\weights\\best.pt",
-    "D:\\runs_yolov5\\exp81\\weights\\best.pt",
-    "D:\\runs_yolov5\\exp82\\weights\\best.pt",
-    "D:\\runs_yolov5\\exp83\\weights\\best.pt",
-    "D:\\runs_yolov5\\exp84\\weights\\best.pt",
+    "D:\\个人文件\\文献\\毕业论文参考\\code\\efficientteacher\\exp_ssod\\exp46\\weights\\best.pt",
+    "D:\\个人文件\\文献\\毕业论文参考\\code\\efficientteacher\\exp_ssod\\exp47\\weights\\best.pt",
+    "D:\\个人文件\\文献\\毕业论文参考\\code\\efficientteacher\\exp_ssod\\exp48\\weights\\best.pt",
+    "D:\\个人文件\\文献\\毕业论文参考\\code\\efficientteacher\\exp_ssod\\exp49\\weights\\best.pt",
+    "D:\\个人文件\\文献\\毕业论文参考\\code\\efficientteacher\\exp_ssod\\exp50\\weights\\best.pt",
 ]
 
 # 传给 val.py 的通用参数
@@ -63,7 +63,7 @@ VAL_ARGS = {
     'verbose': True,        # 打印每个类别的指标（便于本脚本解析各类别；类别多时也强制打印）
     'save-txt': '',      # 是否保存预测 txt
     'half': '',          # 是否使用 FP16 推理
-    'val-ssod': '',       # SSOD(EfficientTeacher) 模型评估保持 True；若报错可改 False
+    'val-ssod': True,       # SSOD(EfficientTeacher) 模型评估保持 True；若报错可改 False
     'cfg': '',              # 训练配置 yaml（走 cfg 里的数据集路径）；用 --data 时留空
 }
 

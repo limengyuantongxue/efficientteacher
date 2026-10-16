@@ -94,6 +94,14 @@ _C.Model.Backbone.kernel_size = 3
 _C.Model.Backbone.with_last_conv = False
 _C.Model.Backbone.pretrain = False
 _C.Model.Backbone.in_channels = 3
+# ---- SDFEN (SmallDefect) backbone ----
+_C.Model.Backbone.widths = [64, 128, 256, 512]   # 四个金字塔层级的通道宽度
+_C.Model.Backbone.boundary_ratio = 0.001         # b1 小/中 边界(归一化面积占比)
+_C.Model.Backbone.boundary_ratio_large = 0.002   # b2 中/大 边界
+_C.Model.Backbone.small_channels = 192           # 三路输出通道(须与 neck 输入一致)
+_C.Model.Backbone.medium_channels = 384
+_C.Model.Backbone.large_channels = 768
+_C.Model.Backbone.ha_temperature = 1.0           # 软标签 sigmoid 温度(像素)
 _C.Model.Backbone.out_channels = [64, 128, 256, 512, 1024]
 _C.Model.Backbone.num_repeats = [1, 6, 12, 18, 6]
 _C.Model.Backbone.lite_conv = False
@@ -169,6 +177,7 @@ _C.Loss.use_gfl=False
 
 #TAL使用的loss参数
 _C.Loss.top_k=13
+_C.Loss.ha_loss_weight=0.1 # SDFEN 层次激活(HA)损失权重；0 表示关闭
 _C.Loss.assigner_type='TAL' #TAL/SimOTA/AnchorBased/ATSS
 _C.Loss.scale_threshold=409.0 # SaA 尺度区分阈值(像素面积)，约 0.001*img_size^2
 _C.Loss.scale_temperature=1.0 # SaA alpha sigmoid temperature
