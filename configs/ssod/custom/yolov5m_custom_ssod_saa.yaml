@@ -41,7 +41,7 @@ Loss:
   obj: 0.7
   anchor_t: 4.0
   # --- SaA: dual-scale aware label assignment ---
-  assigner_type: 'SimOTA'
+  assigner_type: 'SaA'
   # scale_threshold: 约 0.001*img_size^2 (像素面积)。对 1280 图约 1638.4；640 图为 409.6
   scale_threshold: 409.0
   scale_temperature: 1.0
@@ -62,7 +62,7 @@ Dataset:
   np: 0 #number of keypoints
   names: [ 'body_broken', 'eraser_broken', 'NG']
   img_size: 640
-  batch_size: 24
+  batch_size: 8
 
 SSOD:
   # ---------------- DAPT: 双重自适应伪标签阈值 ----------------

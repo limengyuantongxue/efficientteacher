@@ -490,8 +490,9 @@ def run(data,
                     continue
                 _sarr = [np.concatenate(x, 0) for x in zip(*_ent)]
                 if not (len(_sarr) and _sarr[0].any()):
-                    print('  %-10s %8d %9s %9s %9s %9s %9s' %
-                                ('%s-%s' % (_key, _bn), area_gt_count[_key][_bi], '-', '-', '0', '0', '0'))
+                    # 该档无任何 TP：全部按 0 输出（保持与本表其它行一致的数值格式，便于脚本解析）
+                    print('  %-10s %8d %9.4f %9.4f %9.4f %9.4f %9.4f' %
+                                ('%s-%s' % (_key, _bn), area_gt_count[_key][_bi], 0.0, 0.0, 0.0, 0.0, 0.0))
                     continue
                 _pb, _rb, _apb, _f1b, _apcb, _ = ap_per_class(*_sarr, plot=False, save_dir=save_dir, names=names)
                 _ap50b, _apb_all = _apb[:, 0], _apb.mean(1)
@@ -564,7 +565,7 @@ def run(data,
 def parse_opt():
     parser = argparse.ArgumentParser()
     parser.add_argument('--data', type=str, default=ROOT/'pencil_coco.yaml', help='dataset.yaml path')
-    parser.add_argument('--weights', nargs='+', type=str, default="D:/个人文件/文献/毕业论文参考/code/efficientteacher/exp_ssod/exp25/weights/best.pt", help='model.pt path(s)')
+    parser.add_argument('--weights', nargs='+', type=str, default="D:/个人文件/文献/毕业论文参考/code/efficientteacher/exp_ssod/exp58/weights/best.pt", help='model.pt path(s)')
     parser.add_argument('--batch-size', type=int, default=48, help='batch size')
     parser.add_argument('--imgsz', '--img', '--img-size', type=int, default=640, help='inference size (pixels)')
     parser.add_argument('--conf-thres', type=float, default=0.001, help='confidence threshold')
@@ -586,7 +587,7 @@ def parse_opt():
     parser.add_argument('--area-bins', type=str, default='both',
                         help="area-bin AP: 'none' | 'coco'(32^2/96^2 px^2) | 'scale'(0.001/0.002*img^2) | 'both'")
     parser.add_argument('--num-points',  type=int, default=0, help='num of keypoints') 
-    parser.add_argument('--cfg', type=str, default=r'D:\个人文件\文献\毕业论文参考\code\efficientteacher\configs\ssod\custom\yolov5m_custom_ssod_saa.yaml', help='The config file used for validation') 
+    parser.add_argument('--cfg', type=str, default=r'D:\个人文件\文献\毕业论文参考\code\efficientteacher\configs\ssod\custom\yolov5m_custom_ssod_sdfen.yaml', help='The config file used for validation') 
     parser.add_argument('--val-dp1000',  action='store_true', help='trigger when val dp1000 model') 
     opt = parser.parse_args()
     if opt.cfg == '':

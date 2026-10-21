@@ -4,7 +4,8 @@
 project: 'exp_ssod/'
 adam: False
 epochs: 200
-
+# resume: True
+# weights: "D:/个人文件/文献/毕业论文参考/code/efficientteacher/exp_ssod/exp51/weights/last.pt"
 prune_finetune: False
 linear_lr: True
 hyp:
