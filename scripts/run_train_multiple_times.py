@@ -47,7 +47,7 @@ def run_train_once(run_number, total_runs):
     return success, duration
 
 def main():
-    total_runs = 5
+    total_runs = 4
     results = []
     
     print(f"准备运行 train.py 共 {total_runs} 次")
